@@ -1,0 +1,1405 @@
+﻿"use client";
+
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useLocale } from "next-intl";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  ComposedChart,
+  Legend,
+  Line,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+import { Link } from "@/i18n/routing";
+import { MarketPanel } from "@/components/market/MarketUi";
+import {
+  MARKET_HEATMAP_TILES as MARKET_HEATMAP_DATA,
+  MARKET_HOME_STOCKS as MARKET_STOCK_DATA,
+  MARKET_INDEX_CARDS as MARKET_INDEX_DATA,
+} from "@/lib/market-data";
+
+type MarketLocale = "ko" | "en";
+type Localized = Record<MarketLocale, string>;
+type TrendTone = "up" | "down" | "neutral";
+type TimeframeKey = "1h" | "4h" | "1d" | "1w" | "1m";
+
+interface ChartMetric {
+  label: Localized;
+  value: string;
+  tone: TrendTone;
+}
+
+interface ChartDataset {
+  key: TimeframeKey;
+  currentValue: string;
+  changeValue: string;
+  dates: string[];
+  bars: number[];
+  lineValues: number[];
+  leftAxis: string[];
+  rightAxis: string[];
+  metrics: ChartMetric[];
+}
+
+interface MarketChartPoint {
+  date: string;
+  label: string;
+  value: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  ma5: number | null;
+  ma20: number | null;
+  ma60: number | null;
+}
+
+interface SummaryCardData {
+  key: string;
+  label: Localized;
+  value: Localized;
+  tone: "blue" | "emerald" | "red" | "gray";
+}
+
+interface IndexCardData {
+  key: string;
+  eyebrow: Localized;
+  label: string;
+  value: string;
+  delta: string;
+  change: string;
+  tone: TrendTone;
+  spark: number[];
+}
+
+interface HeatTileData {
+  name: string;
+  change: string;
+  tone: TrendTone;
+  desktopCol: 1 | 2 | 3 | 4 | 5 | 6;
+  desktopRow: 1 | 2;
+}
+
+interface StockCardData {
+  key: string;
+  name: string;
+  category: string;
+  rank: number;
+  score: string;
+  delta: string;
+  change: string;
+  tone: TrendTone;
+  participants: string;
+  up: number;
+  flat: number;
+  down: number;
+  spark: number[];
+  href?: string;
+}
+
+const COPY = {
+  ko: {
+    pageTitle: "OSS 시장",
+    pageDescription: "오픈소스 프로젝트의 흐름을 시장 메타포로 해석한 데이터 분석 플랫폼",
+    indexesTitle: "시장 지수",
+    regimeTitle: "시장 현황: 상승장",
+    regimeDescription: "시장은 현재 강한 상승 흐름을 보이고 있습니다",
+    chartTitle: "OSS Market Index",
+    heatmapTitle: "시장 히트맵",
+    heatmapDescription: "붉은색은 강세, 파란색은 약세",
+    stocksTitle: "주요 종목",
+    stocksAction: "전체 보기 ->",
+    distribution: "포지션 분포",
+    participantsSuffix: "참여",
+    rise: "상승",
+    flat: "보합",
+    fall: "하락",
+    timeframes: ["1시간", "4시간", "1일", "1주", "1개월"],
+    fullscreenOpen: "차트 전체화면",
+    fullscreenClose: "전체화면 닫기",
+    hoverPrefix: "지수",
+  },
+  en: {
+    pageTitle: "OSS Market",
+    pageDescription: "A market-style analytics view that interprets open source project momentum as a tradable dashboard.",
+    indexesTitle: "Market indices",
+    regimeTitle: "Market regime: Bullish",
+    regimeDescription: "The market is currently showing a strong upward trend.",
+    chartTitle: "OSS Market Index",
+    heatmapTitle: "Market heatmap",
+    heatmapDescription: "Red indicates strength, blue indicates weakness",
+    stocksTitle: "Core stocks",
+    stocksAction: "View all ->",
+    distribution: "Position split",
+    participantsSuffix: "participants",
+    rise: "Up",
+    flat: "Flat",
+    fall: "Down",
+    timeframes: ["1h", "4h", "1d", "1w", "1mo"],
+    fullscreenOpen: "Expand chart",
+    fullscreenClose: "Close fullscreen",
+    hoverPrefix: "Index",
+  },
+} as const;
+
+const SUMMARY_CARDS: SummaryCardData[] = [
+  { key: "season", label: { ko: "현재 시즌", en: "Current season" }, value: { ko: "2026 Q1", en: "2026 Q1" }, tone: "blue" },
+  { key: "days", label: { ko: "남은 일수", en: "Days left" }, value: { ko: "9일", en: "9 days" }, tone: "emerald" },
+  { key: "predictions", label: { ko: "활성 예측", en: "Active predictions" }, value: { ko: "12,847", en: "12,847" }, tone: "red" },
+  { key: "participants", label: { ko: "참여자", en: "Participants" }, value: { ko: "3,542", en: "3,542" }, tone: "gray" },
+];
+
+const INDEX_CARDS: IndexCardData[] = [
+  {
+    key: "oss",
+    eyebrow: { ko: "전체 오픈소스 시장 지수", en: "Overall open source market index" },
+    label: "OSS Index",
+    value: "1,247.82",
+    delta: "▲ 18.42",
+    change: "+1.50%",
+    tone: "up",
+    spark: [76, 84, 90, 98, 88, 92, 95, 99],
+  },
+  {
+    key: "cncf",
+    eyebrow: { ko: "CNCF 프로젝트 지수", en: "CNCF project index" },
+    label: "CNCF Index",
+    value: "892.15",
+    delta: "▼ 5.23",
+    change: "-0.58%",
+    tone: "down",
+    spark: [88, 86, 85, 83, 82, 80, 79, 78],
+  },
+  {
+    key: "observability",
+    eyebrow: { ko: "관측성 지수", en: "Observability sector index" },
+    label: "Observability Index",
+    value: "634.92",
+    delta: "▲ 12.87",
+    change: "+2.07%",
+    tone: "up",
+    spark: [48, 50, 49, 53, 56, 60, 62, 66],
+  },
+  {
+    key: "infra",
+    eyebrow: { ko: "인프라 성장 지수", en: "Infra growth index" },
+    label: "Infra Growth Index",
+    value: "1,089.34",
+    delta: "▲ 24.56",
+    change: "+2.31%",
+    tone: "up",
+    spark: [68, 72, 74, 78, 82, 86, 90, 94],
+  },
+  {
+    key: "runtime",
+    eyebrow: { ko: "컨테이너 런타임 지수", en: "Container runtime index" },
+    label: "Runtime Index",
+    value: "742.18",
+    delta: "▲ 6.42",
+    change: "+0.87%",
+    tone: "up",
+    spark: [58, 60, 59, 61, 64, 65, 67, 69],
+  },
+  {
+    key: "platform",
+    eyebrow: { ko: "플랫폼 운영 지수", en: "Platform operations index" },
+    label: "Platform Ops Index",
+    value: "913.44",
+    delta: "▲ 11.26",
+    change: "+1.25%",
+    tone: "up",
+    spark: [62, 66, 65, 68, 70, 73, 76, 79],
+  },
+  {
+    key: "devtools",
+    eyebrow: { ko: "개발자 도구 지수", en: "Developer tooling index" },
+    label: "Dev Toolchain Index",
+    value: "688.27",
+    delta: "▼ 3.11",
+    change: "-0.45%",
+    tone: "down",
+    spark: [80, 79, 77, 76, 75, 74, 73, 72],
+  },
+  {
+    key: "mesh",
+    eyebrow: { ko: "서비스 메시/게이트웨이 지수", en: "Service mesh and gateway index" },
+    label: "Mesh & Gateway Index",
+    value: "571.63",
+    delta: "▲ 7.84",
+    change: "+1.39%",
+    tone: "up",
+    spark: [46, 48, 47, 50, 53, 54, 57, 60],
+  },
+];
+
+const CHART_DATA: Record<TimeframeKey, ChartDataset> = {
+  "1h": {
+    key: "1h",
+    currentValue: "1,241.36",
+    changeValue: "+8.24 (+0.67%)",
+    dates: ["09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00"],
+    bars: [240, 310, 380, 420, 365, 440, 470, 495],
+    lineValues: [228, 236, 241, 247, 244, 252, 259, 264],
+    leftAxis: ["500", "375", "250", "125", "0"],
+    rightAxis: ["20K", "15K", "10K", "5K", "0K"],
+    metrics: [
+      { label: { ko: "시가", en: "Open" }, value: "1,233.12", tone: "neutral" },
+      { label: { ko: "고가", en: "High" }, value: "1,247.82", tone: "up" },
+      { label: { ko: "저가", en: "Low" }, value: "1,229.41", tone: "down" },
+      { label: { ko: "현재가", en: "Close" }, value: "1,241.36", tone: "neutral" },
+      { label: { ko: "변동률", en: "Change" }, value: "+0.67%", tone: "up" },
+    ],
+  },
+  "4h": {
+    key: "4h",
+    currentValue: "1,244.98",
+    changeValue: "+21.17 (+1.73%)",
+    dates: ["02/18", "02/19", "02/20", "02/21", "02/22", "02/23", "02/24", "02/25"],
+    bars: [320, 540, 690, 760, 620, 470, 530, 710],
+    lineValues: [590, 612, 641, 658, 649, 671, 688, 704],
+    leftAxis: ["800", "600", "400", "200", "0"],
+    rightAxis: ["28K", "21K", "14K", "7K", "0K"],
+    metrics: [
+      { label: { ko: "시가", en: "Open" }, value: "1,223.81", tone: "neutral" },
+      { label: { ko: "고가", en: "High" }, value: "1,249.06", tone: "up" },
+      { label: { ko: "저가", en: "Low" }, value: "1,218.04", tone: "down" },
+      { label: { ko: "현재가", en: "Close" }, value: "1,244.98", tone: "neutral" },
+      { label: { ko: "변동률", en: "Change" }, value: "+1.73%", tone: "up" },
+    ],
+  },
+  "1d": {
+    key: "1d",
+    currentValue: "1,246.97",
+    changeValue: "+62.46 (+5.27%)",
+    dates: [
+      "2/20", "2/21", "2/22", "2/23", "2/24", "2/25", "2/26", "2/27", "2/28", "3/1", "3/2",
+      "3/3", "3/4", "3/5", "3/6", "3/7", "3/8", "3/9", "3/10", "3/11", "3/12", "3/13",
+      "3/14", "3/15", "3/16", "3/17", "3/18", "3/19", "3/20", "3/21", "3/22",
+    ],
+    bars: [
+      700, 1095, 1180, 1380, 800, 220, 720, 620, 840, 740, 580, 780, 1210, 1230, 1400, 710,
+      1385, 700, 1010, 710, 1090, 760, 760, 1390, 380, 1240, 1110, 1110, 890, 1260, 660,
+    ],
+    lineValues: [
+      1168, 1176, 1174, 1181, 1179, 1186, 1194, 1191, 1198, 1196, 1202, 1200, 1205, 1202, 1208, 1210,
+      1207, 1212, 1209, 1216, 1219, 1217, 1221, 1218, 1220, 1219, 1224, 1222, 1228, 1225, 1224,
+    ],
+    leftAxis: ["1,262.47", "1,224.502", "1,199.502"],
+    rightAxis: ["60K", "15K"],
+    metrics: [
+      { label: { ko: "시가", en: "Open" }, value: "1,185.324", tone: "neutral" },
+      { label: { ko: "고가", en: "High" }, value: "1,256.305", tone: "up" },
+      { label: { ko: "저가", en: "Low" }, value: "1,182.509", tone: "down" },
+      { label: { ko: "종가", en: "Close" }, value: "1,246.965", tone: "neutral" },
+      { label: { ko: "변동률", en: "Change" }, value: "+5.27%", tone: "up" },
+    ],
+  },
+  "1w": {
+    key: "1w",
+    currentValue: "1,231.54",
+    changeValue: "+109.18 (+9.72%)",
+    dates: ["10주", "11주", "12주", "13주", "14주", "15주", "16주", "17주"],
+    bars: [610, 740, 690, 820, 880, 1010, 1175, 1240],
+    lineValues: [884, 905, 919, 941, 963, 989, 1017, 1046],
+    leftAxis: ["1,250", "940", "625", "310", "0"],
+    rightAxis: ["40K", "30K", "20K", "10K", "0K"],
+    metrics: [
+      { label: { ko: "시가", en: "Open" }, value: "1,122.36", tone: "neutral" },
+      { label: { ko: "고가", en: "High" }, value: "1,240.18", tone: "up" },
+      { label: { ko: "저가", en: "Low" }, value: "1,109.74", tone: "down" },
+      { label: { ko: "현재가", en: "Close" }, value: "1,231.54", tone: "neutral" },
+      { label: { ko: "변동률", en: "Change" }, value: "+9.72%", tone: "up" },
+    ],
+  },
+  "1m": {
+    key: "1m",
+    currentValue: "1,198.31",
+    changeValue: "+224.53 (+23.05%)",
+    dates: ["10월", "11월", "12월", "1월", "2월", "3월"],
+    bars: [460, 530, 670, 820, 1030, 1198],
+    lineValues: [818, 852, 907, 968, 1086, 1198],
+    leftAxis: ["1,200", "900", "600", "300", "0"],
+    rightAxis: ["30K", "22K", "15K", "7K", "0K"],
+    metrics: [
+      { label: { ko: "시가", en: "Open" }, value: "973.78", tone: "neutral" },
+      { label: { ko: "고가", en: "High" }, value: "1,214.20", tone: "up" },
+      { label: { ko: "저가", en: "Low" }, value: "962.14", tone: "down" },
+      { label: { ko: "현재가", en: "Close" }, value: "1,198.31", tone: "neutral" },
+      { label: { ko: "변동률", en: "Change" }, value: "+23.05%", tone: "up" },
+    ],
+  },
+};
+
+const INDEX_VOLATILITY: Record<string, number> = {
+  oss: 1,
+  "github-stars": 1.18,
+  cncf: 0.92,
+  observability: 1.08,
+  platform: 1.03,
+  release: 0.95,
+  maintainer: 1.07,
+  security: 0.98,
+  data: 1.04,
+  ai: 1.16,
+};
+
+function countDecimals(value: string) {
+  const match = value.match(/\.(\d+)/);
+  return match ? match[1].length : 0;
+}
+
+function parseNumericText(value: string) {
+  const normalized = value.replace(/,/g, "").replace(/[^0-9.+-]/g, "");
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatNumberLike(pattern: string, value: number) {
+  const decimals = countDecimals(pattern);
+  return new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  }).format(value);
+}
+
+function formatSignedNumber(value: number, decimals = 2) {
+  const sign = value > 0 ? "+" : value < 0 ? "-" : "";
+  return `${sign}${new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  }).format(Math.abs(value))}`;
+}
+
+function formatSignedPercent(value: number, decimals = 2) {
+  return `${formatSignedNumber(value, decimals)}%`;
+}
+
+function sampleSparkValue(values: number[], index: number, total: number) {
+  if (values.length === 0) {
+    return 50;
+  }
+
+  const mappedIndex = Math.round((index / Math.max(total - 1, 1)) * (values.length - 1));
+  return values[mappedIndex] ?? values[values.length - 1] ?? 50;
+}
+
+function scaleAxisValues(labels: string[], scale: number) {
+  return labels.map((label) => {
+    if (!/\d/.test(label)) {
+      return label;
+    }
+
+    const scaledValue = parseNumericText(label) * scale;
+    const formatted = formatNumberLike(label.replace(/[Kk]/g, ""), scaledValue);
+    return label.includes("K") ? `${formatted}K` : formatted;
+  });
+}
+
+function buildIndexDataset(card: IndexCardData, timeframe: TimeframeKey): ChartDataset {
+  const base = CHART_DATA[timeframe];
+  const targetClose = parseNumericText(card.value) || parseNumericText(base.currentValue);
+  const targetDelta = parseNumericText(card.delta);
+  const targetChange = parseNumericText(card.change);
+  const baseClose = parseNumericText(base.currentValue) || targetClose;
+  const scale = targetClose / Math.max(baseClose, 1);
+  const volatility = INDEX_VOLATILITY[card.key] ?? 1;
+  const sparkMomentum =
+    ((card.spark[card.spark.length - 1] ?? 50) - (card.spark[0] ?? 50)) / 100;
+  const amplitude = 1 + sparkMomentum * 0.24;
+
+  let lineValues = base.lineValues.map((value, index) => {
+    const sparkValue = sampleSparkValue(card.spark, index, base.lineValues.length);
+    const sparkOffset = ((sparkValue - 50) / 50) * targetClose * 0.02 * volatility;
+    return value * scale * amplitude + sparkOffset;
+  });
+
+  const lineShift = targetClose - (lineValues[lineValues.length - 1] ?? targetClose);
+  lineValues = lineValues.map((value) => Number((value + lineShift).toFixed(3)));
+
+  const baseBarMax = Math.max(...base.bars, 1);
+  const volumeScale = 0.82 + Math.min(Math.abs(targetChange) / 6, 0.55) + Math.abs(sparkMomentum) * 0.35;
+  const bars = base.bars.map((value, index) => {
+    const sparkValue = sampleSparkValue(card.spark, index, base.bars.length);
+    const sparkScale = 0.72 + sparkValue / 140;
+    return Math.max(Math.round((value / baseBarMax) * baseBarMax * volumeScale * sparkScale * volatility), 80);
+  });
+
+  const openValue = lineValues[0] ?? targetClose;
+  const closeValue = targetClose;
+  const highValue = Math.max(...lineValues, closeValue + Math.abs(targetDelta) * 0.45);
+  const lowValue = Math.min(...lineValues, closeValue - Math.abs(targetDelta) * 0.45);
+
+  return {
+    ...base,
+    currentValue: formatNumberLike(base.currentValue, targetClose),
+    changeValue: `${formatSignedNumber(targetDelta)} (${formatSignedPercent(targetChange)})`,
+    bars,
+    lineValues,
+    leftAxis: scaleAxisValues(base.leftAxis, scale),
+    rightAxis: scaleAxisValues(base.rightAxis, volumeScale * volatility),
+    metrics: base.metrics.map((metric) => {
+      const metricKey = metric.label.en.toLowerCase();
+
+      if (metricKey === "open") {
+        return { ...metric, value: formatNumberLike(metric.value, openValue), tone: "neutral" as const };
+      }
+
+      if (metricKey === "high") {
+        return { ...metric, value: formatNumberLike(metric.value, highValue), tone: "up" as const };
+      }
+
+      if (metricKey === "low") {
+        return { ...metric, value: formatNumberLike(metric.value, lowValue), tone: "down" as const };
+      }
+
+      if (metricKey === "change") {
+        return {
+          ...metric,
+          value: formatSignedPercent(targetChange),
+          tone: targetChange < 0 ? ("down" as const) : ("up" as const),
+        };
+      }
+
+      return { ...metric, value: formatNumberLike(metric.value, closeValue), tone: "neutral" as const };
+    }),
+  };
+}
+
+function calculateMovingAverage(values: number[], period: number) {
+  return values.map((_, index) => {
+    if (index < period - 1) {
+      return null;
+    }
+
+    const window = values.slice(index - period + 1, index + 1);
+    return Number((window.reduce((sum, value) => sum + value, 0) / period).toFixed(3));
+  });
+}
+
+function buildChartSeries(dataset: ChartDataset, timeframe: TimeframeKey): MarketChartPoint[] {
+  const closes = dataset.lineValues;
+  const maxVolumeSeed = Math.max(...dataset.bars, 1);
+
+  const rows = closes.map((close, index) => {
+    const previousClose = index === 0 ? close * 0.996 : closes[index - 1] ?? close;
+    const open = Number((index === 0 ? previousClose : previousClose + (close - previousClose) * 0.28).toFixed(3));
+    const spread = Math.max(dataset.bars[index] / maxVolumeSeed * close * 0.012, close * 0.0045);
+    const high = Number((Math.max(open, close) + spread).toFixed(3));
+    const low = Number((Math.min(open, close) - spread * 0.82).toFixed(3));
+    const label = dataset.dates[index] ?? `${index}`;
+    const date =
+      timeframe === "1d"
+        ? `2026-${label.replace("/", "-")}T09:00:00`
+        : timeframe === "1h"
+          ? `2026-03-22T${label.padStart(5, "0")}:00`
+          : `2026-${String(index + 1).padStart(2, "0")}-01T09:00:00`;
+
+    return {
+      date,
+      label,
+      value: close,
+      open,
+      high,
+      low,
+      close: Number(close.toFixed(3)),
+      volume: Math.round(dataset.bars[index] * 42 + 10000),
+      ma5: null,
+      ma20: null,
+      ma60: null,
+    };
+  });
+
+  const ma5 = calculateMovingAverage(rows.map((row) => row.close), 5);
+  const ma20 = calculateMovingAverage(rows.map((row) => row.close), 20);
+  const ma60 = calculateMovingAverage(rows.map((row) => row.close), 60);
+
+  return rows.map((row, index) => ({
+    ...row,
+    ma5: ma5[index],
+    ma20: ma20[index],
+    ma60: ma60[index],
+  }));
+}
+
+function formatTooltipDate(value: string) {
+  return new Date(value).toLocaleString("ko-KR");
+}
+
+function formatTooltipNumber(value: number, decimals = 2) {
+  return value.toLocaleString("ko-KR", {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+}
+
+function CustomPriceTooltip({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean;
+  payload?: Array<{ dataKey?: string; value?: number }>;
+  label?: string;
+}) {
+  if (!active || !payload || payload.length === 0 || !label) {
+    return null;
+  }
+
+  const values = new Map<string, number>();
+  payload.forEach((entry) => {
+    if (entry.dataKey && typeof entry.value === "number") {
+      values.set(entry.dataKey, entry.value);
+    }
+  });
+
+  const rows = [
+    { key: "open", label: "시가" },
+    { key: "high", label: "고가" },
+    { key: "low", label: "저가" },
+    { key: "close", label: "종가" },
+    { key: "ma5", label: "MA5" },
+    { key: "ma20", label: "MA20" },
+    { key: "ma60", label: "MA60" },
+  ].filter((row) => values.has(row.key));
+
+  return (
+    <div className="rounded-[6px] border border-[#2b2f36] bg-[#0d1117] px-[10px] py-2 text-[11px] text-[#d1d4dc] shadow-[0px_8px_24px_rgba(0,0,0,0.28)]">
+      <p className="mb-1 text-[#848e9c]">{formatTooltipDate(label)}</p>
+      <div className="space-y-1">
+        {rows.map((row) => (
+          <div key={row.key} className="flex min-w-[132px] items-center justify-between gap-4">
+            <span className="text-[#848e9c]">{row.label}</span>
+            <span>{formatTooltipNumber(values.get(row.key) ?? 0)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CustomVolumeTooltip({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean;
+  payload?: Array<{ value?: number }>;
+  label?: string;
+}) {
+  if (!active || !payload || payload.length === 0 || !label || typeof payload[0]?.value !== "number") {
+    return null;
+  }
+
+  return (
+    <div className="rounded-[6px] border border-[#2b2f36] bg-[#0d1117] px-[10px] py-2 text-[11px] text-[#d1d4dc] shadow-[0px_8px_24px_rgba(0,0,0,0.28)]">
+      <p className="mb-1 text-[#848e9c]">{formatTooltipDate(label)}</p>
+      <div className="flex min-w-[132px] items-center justify-between gap-4">
+        <span className="text-[#848e9c]">거래량</span>
+        <span>{Math.round(payload[0].value).toLocaleString("ko-KR")}</span>
+      </div>
+    </div>
+  );
+}
+
+const HEATMAP_TILES: HeatTileData[] = [
+  { name: "Argo CD", change: "+4.20%", tone: "up", desktopCol: 1, desktopRow: 1 },
+  { name: "Kubernetes", change: "+2.40%", tone: "up", desktopCol: 2, desktopRow: 1 },
+  { name: "Prometheus", change: "+2.08%", tone: "up", desktopCol: 3, desktopRow: 1 },
+  { name: "Grafana", change: "+1.77%", tone: "up", desktopCol: 4, desktopRow: 1 },
+  { name: "Envoy", change: "+0.96%", tone: "up", desktopCol: 5, desktopRow: 1 },
+  { name: "Terraform", change: "+1.41%", tone: "up", desktopCol: 6, desktopRow: 1 },
+  { name: "Cilium", change: "-0.60%", tone: "down", desktopCol: 1, desktopRow: 2 },
+  { name: "Istio", change: "-1.57%", tone: "down", desktopCol: 2, desktopRow: 2 },
+  { name: "Docker", change: "+1.13%", tone: "up", desktopCol: 3, desktopRow: 2 },
+  { name: "etcd", change: "-0.51%", tone: "down", desktopCol: 4, desktopRow: 2 },
+  { name: "containerd", change: "-0.38%", tone: "down", desktopCol: 5, desktopRow: 2 },
+];
+
+const STOCK_CARDS: StockCardData[] = [
+  {
+    key: "kubernetes",
+    name: "Kubernetes",
+    category: "Orchestration",
+    rank: 1,
+    score: "94.5",
+    delta: "▲ 2.1",
+    change: "+2.29%",
+    tone: "up",
+    participants: "1,000",
+    up: 57,
+    flat: 29,
+    down: 14,
+    spark: [82, 83, 83, 84, 85, 86, 88, 89],
+    href: "/market/trading/kubernetes",
+  },
+  {
+    key: "prometheus",
+    name: "Prometheus",
+    category: "Observability",
+    rank: 2,
+    score: "88.2",
+    delta: "▲ 1.3",
+    change: "+1.50%",
+    tone: "up",
+    participants: "1,260",
+    up: 47,
+    flat: 43,
+    down: 10,
+    spark: [78, 79, 80, 80, 81, 82, 83, 84],
+    href: "/market/trading/prometheus",
+  },
+  {
+    key: "cilium",
+    name: "Cilium",
+    category: "Networking",
+    rank: 5,
+    score: "82.7",
+    delta: "▼ 0.8",
+    change: "-0.95%",
+    tone: "down",
+    participants: "932",
+    up: 42,
+    flat: 33,
+    down: 25,
+    spark: [79, 78, 77, 76, 75, 74, 73, 72],
+    href: "/market/trading/cilium",
+  },
+  {
+    key: "argo-cd",
+    name: "Argo CD",
+    category: "CI/CD",
+    rank: 7,
+    score: "79.4",
+    delta: "▲ 2.4",
+    change: "+4.20%",
+    tone: "up",
+    participants: "952",
+    up: 71,
+    flat: 21,
+    down: 8,
+    spark: [68, 70, 72, 74, 75, 77, 78, 80],
+    href: "/market/trading/argo-cd",
+  },
+  {
+    key: "grafana",
+    name: "Grafana",
+    category: "Observability",
+    rank: 3,
+    score: "86.1",
+    delta: "▲ 1.5",
+    change: "+1.77%",
+    tone: "up",
+    participants: "1,444",
+    up: 72,
+    flat: 22,
+    down: 7,
+    spark: [78, 79, 80, 80, 81, 82, 83, 84],
+    href: "/market/trading/grafana",
+  },
+  {
+    key: "istio",
+    name: "Istio",
+    category: "Service Mesh",
+    rank: 12,
+    score: "75.3",
+    delta: "▼ 1.2",
+    change: "-1.57%",
+    tone: "down",
+    participants: "980",
+    up: 35,
+    flat: 42,
+    down: 23,
+    spark: [74, 73, 72, 71, 70, 69, 68, 67],
+    href: "/market/trading/istio",
+  },
+  {
+    key: "envoy",
+    name: "Envoy",
+    category: "Networking",
+    rank: 4,
+    score: "83.9",
+    delta: "▲ 0.8",
+    change: "+0.96%",
+    tone: "up",
+    participants: "1,000",
+    up: 57,
+    flat: 29,
+    down: 14,
+    spark: [80, 81, 82, 81, 83, 84, 84, 85],
+    href: "/market/trading/envoy",
+  },
+  {
+    key: "containerd",
+    name: "containerd",
+    category: "Container Runtime",
+    rank: 9,
+    score: "78.6",
+    delta: "▼ 0.3",
+    change: "-0.38%",
+    tone: "down",
+    participants: "966",
+    up: 44,
+    flat: 37,
+    down: 19,
+    spark: [76, 75, 74, 74, 73, 72, 71, 70],
+    href: "/market/trading/containerd",
+  },
+  {
+    key: "docker",
+    name: "Docker",
+    category: "Container Platform",
+    rank: 6,
+    score: "80.8",
+    delta: "▲ 0.9",
+    change: "+1.13%",
+    tone: "up",
+    participants: "1,148",
+    up: 54,
+    flat: 30,
+    down: 16,
+    spark: [74, 75, 76, 77, 77, 78, 79, 80],
+    href: "/market/trading/docker",
+  },
+  {
+    key: "etcd",
+    name: "etcd",
+    category: "Distributed Database",
+    rank: 10,
+    score: "77.8",
+    delta: "▼ 0.4",
+    change: "-0.51%",
+    tone: "down",
+    participants: "688",
+    up: 39,
+    flat: 37,
+    down: 24,
+    spark: [72, 72, 71, 70, 69, 68, 68, 67],
+    href: "/market/trading/etcd",
+  },
+  {
+    key: "terraform",
+    name: "Terraform",
+    category: "Infrastructure as Code",
+    rank: 8,
+    score: "79.2",
+    delta: "▲ 1.1",
+    change: "+1.41%",
+    tone: "up",
+    participants: "1,192",
+    up: 63,
+    flat: 24,
+    down: 13,
+    spark: [70, 71, 72, 73, 74, 76, 77, 79],
+    href: "/market/trading/terraform",
+  },
+];
+
+function buildPath(values: number[], width: number, height: number) {
+  const max = Math.max(...values);
+  const min = Math.min(...values);
+  const range = max - min || 1;
+
+  return values
+    .map((value, index) => {
+      const x = values.length === 1 ? width / 2 : (width / (values.length - 1)) * index;
+      const y = ((max - value) / range) * (height - 6) + 3;
+      return `${index === 0 ? "M" : "L"} ${x} ${y}`;
+    })
+    .join(" ");
+}
+
+function toneClasses(tone: TrendTone) {
+  if (tone === "up") {
+    return {
+      line: "#c84a31",
+      text: "text-[#c84a31]",
+      tile: "bg-[rgba(200,74,49,0.1)] text-[#c84a31]",
+      heatmap: "border-[rgba(200,74,49,0.26)] bg-[rgba(200,74,49,0.36)]",
+    };
+  }
+
+  if (tone === "down") {
+    return {
+      line: "#1261c4",
+      text: "text-[#1261c4]",
+      tile: "bg-[rgba(18,97,196,0.1)] text-[#1261c4]",
+      heatmap: "border-[rgba(18,97,196,0.26)] bg-[rgba(18,97,196,0.32)]",
+    };
+  }
+
+  return {
+    line: "#848e9c",
+    text: "text-[#848e9c]",
+    tile: "bg-[rgba(132,142,156,0.1)] text-[#848e9c]",
+    heatmap: "border-[rgba(132,142,156,0.24)] bg-[rgba(43,47,54,0.5)]",
+  };
+}
+
+function heatmapPlacementClass(tile: HeatTileData) {
+  if (tile.desktopCol === 1 && tile.desktopRow === 1) return "md:col-start-1 md:row-start-1";
+  if (tile.desktopCol === 2 && tile.desktopRow === 1) return "md:col-start-2 md:row-start-1";
+  if (tile.desktopCol === 3 && tile.desktopRow === 1) return "md:col-start-3 md:row-start-1";
+  if (tile.desktopCol === 4 && tile.desktopRow === 1) return "md:col-start-4 md:row-start-1";
+  if (tile.desktopCol === 5 && tile.desktopRow === 1) return "md:col-start-5 md:row-start-1";
+  if (tile.desktopCol === 6 && tile.desktopRow === 1) return "md:col-start-6 md:row-start-1";
+  if (tile.desktopCol === 1 && tile.desktopRow === 2) return "md:col-start-1 md:row-start-2";
+  if (tile.desktopCol === 2 && tile.desktopRow === 2) return "md:col-start-2 md:row-start-2";
+  if (tile.desktopCol === 3 && tile.desktopRow === 2) return "md:col-start-3 md:row-start-2";
+  if (tile.desktopCol === 4 && tile.desktopRow === 2) return "md:col-start-4 md:row-start-2";
+  if (tile.desktopCol === 5 && tile.desktopRow === 2) return "md:col-start-5 md:row-start-2";
+  if (tile.desktopCol === 6 && tile.desktopRow === 2) return "md:col-start-6 md:row-start-2";
+  return "";
+}
+
+function SummaryIcon({ tone }: { tone: SummaryCardData["tone"] }) {
+  const wrapper =
+    tone === "blue"
+      ? "bg-[rgba(51,102,255,0.1)] text-[#3366ff]"
+      : tone === "emerald"
+        ? "bg-[rgba(34,171,148,0.1)] text-[#22ab94]"
+        : tone === "red"
+          ? "bg-[rgba(200,74,49,0.1)] text-[#c84a31]"
+          : "bg-[rgba(132,142,156,0.1)] text-[#848e9c]";
+
+  return (
+    <div className={`flex h-9 w-9 items-center justify-center rounded-[4px] ${wrapper}`}>
+      {tone === "blue" ? (
+        <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 16 16">
+          <rect height="10" rx="1.4" stroke="currentColor" strokeWidth="1.2" width="10" x="3" y="4" />
+          <path d="M5 2.5V5" stroke="currentColor" strokeLinecap="round" strokeWidth="1.2" />
+          <path d="M11 2.5V5" stroke="currentColor" strokeLinecap="round" strokeWidth="1.2" />
+        </svg>
+      ) : tone === "emerald" ? (
+        <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 16 16">
+          <path d="M4 11L7.25 7.75L9.5 10L12 4.5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.2" />
+        </svg>
+      ) : tone === "red" ? (
+        <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 16 16">
+          <path d="M4 10.5H6.5L8 7.5L9.3 9.25H12" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.2" />
+        </svg>
+      ) : (
+        <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 16 16">
+          <path d="M8 8C9.38 8 10.5 6.88 10.5 5.5C10.5 4.12 9.38 3 8 3C6.62 3 5.5 4.12 5.5 5.5C5.5 6.88 6.62 8 8 8Z" stroke="currentColor" strokeWidth="1.2" />
+          <path d="M3.5 13C4.3 10.96 5.91 10 8 10C10.09 10 11.7 10.96 12.5 13" stroke="currentColor" strokeLinecap="round" strokeWidth="1.2" />
+        </svg>
+      )}
+    </div>
+  );
+}
+
+function Sparkline({ values, stroke }: { values: number[]; stroke: string }) {
+  return (
+    <svg className="h-10 w-full" viewBox="0 0 281 40" xmlns="http://www.w3.org/2000/svg">
+      <path d={buildPath(values, 281, 40)} fill="none" stroke={stroke} strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" />
+    </svg>
+  );
+}
+
+function SummaryCard({ card, locale }: { card: SummaryCardData; locale: MarketLocale }) {
+  return (
+    <div className="market-panel flex h-[58px] items-center gap-[10px] px-[11px] py-px">
+      <SummaryIcon tone={card.tone} />
+      <div className="flex min-w-0 flex-col">
+        <span className="text-[9px] leading-[13.5px] text-[#848e9c]">{card.label[locale]}</span>
+        <span className="text-[12px] font-semibold leading-4 text-[#d1d4dc]">{card.value[locale]}</span>
+      </div>
+    </div>
+  );
+}
+
+function IndexCard({
+  card,
+  locale,
+  active,
+  onSelect,
+}: {
+  card: IndexCardData;
+  locale: MarketLocale;
+  active: boolean;
+  onSelect: (key: string) => void;
+}) {
+  const tone = toneClasses(card.tone);
+
+  return (
+    <button
+      aria-pressed={active}
+      className={`market-panel h-full p-3 text-left transition ${
+        active
+          ? "border-[#3366ff] bg-[rgba(51,102,255,0.08)] shadow-[0px_0px_0px_1px_rgba(51,102,255,0.28)]"
+          : "hover:border-[#3a4050] hover:bg-[#20242d]"
+      }`}
+      onClick={() => onSelect(card.key)}
+      type="button"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[10px] leading-[15px] text-[#848e9c]">{card.eyebrow[locale]}</p>
+          <h3 className="mt-0.5 text-[14px] font-semibold leading-5 text-[#d1d4dc]">{card.label}</h3>
+        </div>
+        <span className={tone.text}>
+          <svg aria-hidden="true" className="h-[14px] w-[14px]" fill="none" viewBox="0 0 14 14">
+            {card.tone === "down" ? (
+              <path d="M3 4.5H11L7.75 9.5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.2" />
+            ) : (
+              <path d="M3 9.5H11L7.75 4.5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.2" />
+            )}
+          </svg>
+        </span>
+      </div>
+
+      <div className="mt-3">
+        <Sparkline stroke={tone.line} values={card.spark} />
+      </div>
+
+      <div className="mt-2">
+        <p className="text-[20px] font-bold leading-7 text-[#d1d4dc]">{card.value}</p>
+        <div className={`mt-0.5 flex items-center gap-1 text-[12px] leading-4 ${tone.text}`}>
+          <span className="font-medium">{card.delta}</span>
+          <span>{card.change}</span>
+        </div>
+      </div>
+    </button>
+  );
+}
+
+function RegimeBar({ locale }: { locale: MarketLocale }) {
+  const text = COPY[locale];
+
+  return (
+    <div className="flex items-center gap-[10px] rounded-[4px] border border-[rgba(200,74,49,0.2)] bg-[rgba(200,74,49,0.1)] px-[11px] py-px">
+      <span className="text-[#c84a31]">
+        <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 16 16">
+          <path d="M3.5 11.25L6.25 8.5L8 10.25L12.5 5.75" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.2" />
+        </svg>
+      </span>
+      <div className="py-1.5">
+        <p className="text-[12px] font-semibold leading-4 text-[#c84a31]">{text.regimeTitle}</p>
+        <p className="text-[10px] leading-[15px] text-[#848e9c]">{text.regimeDescription}</p>
+      </div>
+    </div>
+  );
+}
+
+function ExpandIcon({ expanded = false }: { expanded?: boolean }) {
+  if (expanded) {
+    return (
+      <svg aria-hidden="true" className="h-4 w-4 text-[#848e9c]" fill="none" viewBox="0 0 16 16">
+        <path d="M5 5L11 11" stroke="currentColor" strokeLinecap="round" strokeWidth="1.2" />
+        <path d="M11 5L5 11" stroke="currentColor" strokeLinecap="round" strokeWidth="1.2" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg aria-hidden="true" className="h-4 w-4 text-[#848e9c]" fill="none" viewBox="0 0 16 16">
+      <path d="M6 10L10 6" stroke="currentColor" strokeLinecap="round" strokeWidth="1.2" />
+      <path d="M6.5 5.5H10.5V9.5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.2" />
+    </svg>
+  );
+}
+
+function AdvancedChart({
+  locale,
+  activeIndex,
+}: {
+  locale: MarketLocale;
+  activeIndex: IndexCardData;
+}) {
+  const text = COPY[locale];
+  const timeframeKeys: TimeframeKey[] = ["1h", "4h", "1d", "1w", "1m"];
+  const [selectedTimeframe, setSelectedTimeframe] = useState<TimeframeKey>("1d");
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  const dataset = buildIndexDataset(activeIndex, selectedTimeframe);
+  const changeTone = dataset.changeValue.startsWith("-") ? "text-[#1261c4]" : "text-[#c84a31]";
+  const chartData = useMemo(() => buildChartSeries(dataset, selectedTimeframe), [dataset, selectedTimeframe]);
+
+  useEffect(() => {
+    if (!isExpanded) {
+      return;
+    }
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsExpanded(false);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [isExpanded]);
+
+  const renderChartBody = (expanded: boolean) => {
+    const priceAreaHeight = expanded ? 360 : 280;
+    const volumeAreaHeight = expanded ? 112 : 88;
+
+    return (
+      <>
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <p className="text-[10px] leading-[15px] text-[#848e9c]">{activeIndex.eyebrow[locale]}</p>
+            <h2 className="text-[16px] font-semibold leading-6 text-[#d1d4dc]">{activeIndex.label}</h2>
+            <div className="mt-0.5 flex flex-wrap items-center gap-2">
+              <span className="text-[24px] font-bold leading-8 text-[#d1d4dc]">{dataset.currentValue}</span>
+              <span className={`text-[14px] font-semibold leading-5 ${changeTone}`}>↗ {dataset.changeValue}</span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 self-start">
+            <div className="flex h-[29px] items-center gap-[2px] rounded-[4px] border border-[#2b2f36] bg-[#0d1117] px-[3px] py-px">
+              {timeframeKeys.map((key, index) => {
+                const active = key === selectedTimeframe;
+                return (
+                  <button
+                    key={key}
+                    className={`inline-flex h-[23px] items-center justify-center rounded-[4px] px-3 text-[10px] font-medium leading-[15px] transition ${
+                      active
+                        ? "bg-[#1f6feb] text-white shadow-[0px_1px_3px_0px_rgba(0,0,0,0.1),0px_1px_2px_0px_rgba(0,0,0,0.1)]"
+                        : "text-[#848e9c] hover:bg-[rgba(43,47,54,0.42)] hover:text-[#d1d4dc]"
+                    }`}
+                    onClick={() => {
+                      setSelectedTimeframe(key);
+                    }}
+                    type="button"
+                  >
+                    {text.timeframes[index]}
+                  </button>
+                );
+              })}
+            </div>
+            <button
+              aria-label={expanded ? text.fullscreenClose : text.fullscreenOpen}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-[4px] text-[#848e9c] transition hover:bg-[rgba(43,47,54,0.42)] hover:text-[#d1d4dc]"
+              onClick={() => setIsExpanded((value) => !value)}
+              type="button"
+            >
+              <ExpandIcon expanded={expanded} />
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-4 space-y-3">
+          <div className="flex flex-wrap gap-2">
+            <span className="rounded-[4px] bg-[rgba(34,197,94,0.2)] px-2 py-1 text-[8px] font-semibold leading-[10px] text-[#22c55e]">
+              MA5
+            </span>
+            <span className="rounded-[4px] bg-[rgba(249,115,22,0.2)] px-2 py-1 text-[8px] font-semibold leading-[10px] text-[#f97316]">
+              MA20
+            </span>
+            <span className="rounded-[4px] bg-[rgba(245,158,11,0.2)] px-2 py-1 text-[8px] font-semibold leading-[10px] text-[#f59e0b]">
+              MA60
+            </span>
+          </div>
+
+          <div className="market-scroll overflow-x-auto">
+            <div className={dataset.dates.length > 12 ? "min-w-[1024px]" : "min-w-[760px]"}>
+              <div style={{ height: `${priceAreaHeight}px`, minWidth: "760px" }}>
+                <ResponsiveContainer height="100%" width="100%">
+                  <ComposedChart data={chartData} syncId="ossMarket" margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
+                    <CartesianGrid stroke="#2b2f36" strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="label" minTickGap={16} stroke="#6c7284" tick={{ fill: "#6c7284", fontSize: 10 }} />
+                    <YAxis
+                      domain={["dataMin - 8", "dataMax + 8"]}
+                      stroke="#6c7284"
+                      tick={{ fill: "#6c7284", fontSize: 10 }}
+                      tickFormatter={(value: number) => value.toLocaleString("en-US", { maximumFractionDigits: 3 })}
+                    />
+                    <Tooltip content={<CustomPriceTooltip />} />
+                    <Legend verticalAlign="top" align="left" iconType="line" wrapperStyle={{ fontSize: "10px", color: "#848e9c" }} />
+                    <Bar dataKey="close" fill="#d85b35" fillOpacity={0.24} radius={[2, 2, 0, 0]} name="종가 막대" />
+                    <Line dataKey="close" dot={false} name="종가" stroke="#4e8cff" strokeWidth={2} type="monotone" />
+                    <Line dataKey="ma5" dot={false} name="MA5" stroke="#22c55e" strokeWidth={1.5} type="monotone" />
+                    <Line dataKey="ma20" dot={false} name="MA20" stroke="#f97316" strokeWidth={1.5} type="monotone" />
+                    <Line dataKey="ma60" dot={false} name="MA60" stroke="#f59e0b" strokeWidth={1.5} type="monotone" />
+                    <Line dataKey="open" hide dot={false} stroke="#000000" />
+                    <Line dataKey="high" hide dot={false} stroke="#000000" />
+                    <Line dataKey="low" hide dot={false} stroke="#000000" />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
+
+              <div style={{ height: `${volumeAreaHeight}px`, minWidth: "760px" }}>
+                <ResponsiveContainer height="100%" width="100%">
+                  <BarChart data={chartData} syncId="ossMarket" margin={{ top: 0, right: 8, left: 8, bottom: 0 }}>
+                    <CartesianGrid stroke="#2b2f36" strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="label" minTickGap={16} stroke="#6c7284" tick={{ fill: "#6c7284", fontSize: 10 }} />
+                    <YAxis
+                      stroke="#6c7284"
+                      tick={{ fill: "#6c7284", fontSize: 9 }}
+                      tickFormatter={(value: number) => value.toLocaleString("en-US")}
+                    />
+                    <Tooltip content={<CustomVolumeTooltip />} />
+                    <Bar dataKey="volume" fill="#4c515c" radius={[2, 2, 0, 0]} name="거래량" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-3 md:grid-cols-5">
+          {dataset.metrics.map((metric) => (
+            <div
+              key={`${selectedTimeframe}-${metric.label.en}`}
+              className="rounded-[4px] border border-[rgba(43,47,54,0.5)] bg-[#0d1117] px-[11px] pb-px pt-[11px]"
+            >
+              <p className="text-[9px] leading-[13.5px] text-[#848e9c]">{metric.label[locale]}</p>
+              <p
+                className={`mt-0.5 text-[12px] font-semibold leading-4 ${
+                  metric.tone === "up"
+                    ? "text-[#c84a31]"
+                    : metric.tone === "down"
+                      ? "text-[#1261c4]"
+                      : "text-[#d1d4dc]"
+                }`}
+              >
+                {metric.value}
+              </p>
+            </div>
+          ))}
+        </div>
+      </>
+    );
+  };
+
+  return (
+    <>
+      <MarketPanel className="p-[17px]">{renderChartBody(false)}</MarketPanel>
+
+      {isExpanded ? (
+        <div className="fixed inset-0 z-[120] bg-[rgba(13,17,23,0.82)] p-4 backdrop-blur-[2px]">
+          <div className="mx-auto flex h-full w-full max-w-[1440px] items-center justify-center">
+            <MarketPanel className="w-full p-[17px] shadow-[0px_24px_80px_rgba(0,0,0,0.45)]">
+              {renderChartBody(true)}
+            </MarketPanel>
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function HeatmapSection({ locale }: { locale: MarketLocale }) {
+  const text = COPY[locale];
+
+  return (
+    <MarketPanel className="p-4">
+      <h2 className="text-[16px] font-semibold leading-6 text-[#d1d4dc]">{text.heatmapTitle}</h2>
+      <p className="mt-1 text-[10px] leading-[15px] text-[#848e9c]">{text.heatmapDescription}</p>
+
+      <div className="mt-4 grid grid-cols-2 gap-[2px] md:grid-cols-6 md:grid-rows-2">
+        {MARKET_HEATMAP_DATA.map((tile) => {
+          const tone = toneClasses(tile.tone);
+
+          return (
+            <div
+              key={tile.name}
+              className={`flex h-[92px] flex-col items-center justify-center rounded-[3px] border px-3 text-center md:h-[94px] md:px-4 ${tone.heatmap} ${heatmapPlacementClass(tile)}`}
+            >
+              <p className="text-[10px] font-medium leading-[15px] text-[#d1d4dc]">{tile.name}</p>
+              <p className={`mt-1 text-[10px] font-medium leading-[15px] ${tone.text}`}>{tile.change}</p>
+            </div>
+          );
+        })}
+      </div>
+    </MarketPanel>
+  );
+}
+
+function StockCardContent({
+  stock,
+  locale,
+}: {
+  stock: StockCardData;
+  locale: MarketLocale;
+}) {
+  const text = COPY[locale];
+  const tone = toneClasses(stock.tone);
+
+  return (
+    <>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-[6px]">
+            <h3 className="text-[14px] font-semibold leading-5 text-[#d1d4dc]">{stock.name}</h3>
+            <span className="rounded-[4px] bg-[rgba(43,47,54,0.5)] px-1.5 py-0.5 text-[10px] leading-[15px] text-[#848e9c]">
+              #{stock.rank}
+            </span>
+          </div>
+          <p className="mt-0.5 text-[10px] leading-[15px] text-[#848e9c]">{stock.category}</p>
+        </div>
+      </div>
+
+      <div className="mt-3 h-10">
+        <Sparkline stroke={tone.line} values={stock.spark} />
+      </div>
+
+      <div className="mt-2 flex items-end gap-2">
+        <span className="text-[18px] font-bold leading-7 text-[#d1d4dc]">{stock.score}</span>
+        <span className={`mb-[3px] text-[10px] leading-[15px] ${tone.text}`}>
+          {stock.delta} ({stock.change})
+        </span>
+      </div>
+
+      <div className="mt-2.5">
+        <div className="flex items-center justify-between text-[10px] leading-[15px] text-[#848e9c]">
+          <span>{text.distribution}</span>
+          <span>
+            {stock.participants} {text.participantsSuffix}
+          </span>
+        </div>
+        <div className="mt-1.5 flex h-1 overflow-hidden rounded-[6px] bg-[rgba(43,47,54,0.3)]">
+          <div className="bg-[#c84a31]" style={{ width: `${stock.up}%` }} />
+          <div className="bg-[#848e9c]" style={{ width: `${stock.flat}%` }} />
+          <div className="bg-[#1261c4]" style={{ width: `${stock.down}%` }} />
+        </div>
+        <div className="mt-1.5 flex items-center justify-between text-[9px] font-medium leading-[13.5px]">
+          <span className="text-[#c84a31]">
+            {stock.up}% {text.rise}
+          </span>
+          <span className="text-[#848e9c]">
+            {stock.flat}% {text.flat}
+          </span>
+          <span className="text-[#1261c4]">
+            {stock.down}% {text.fall}
+          </span>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function StockCard({
+  stock,
+  locale,
+}: {
+  stock: StockCardData;
+  locale: MarketLocale;
+}) {
+  const classes =
+    "market-panel block min-h-[198px] p-3 transition hover:border-[#3a4050] hover:bg-[#20242d]";
+
+  if (stock.href) {
+    return (
+      <Link className={classes} href={stock.href}>
+        <StockCardContent locale={locale} stock={stock} />
+      </Link>
+    );
+  }
+
+  return (
+    <article className="market-panel min-h-[198px] p-3">
+      <StockCardContent locale={locale} stock={stock} />
+    </article>
+  );
+}
+
+function SectionHeader({
+  title,
+  action,
+}: {
+  title: string;
+  action?: ReactNode;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <h2 className="text-[16px] font-semibold leading-6 text-[#d1d4dc]">{title}</h2>
+      {action}
+    </div>
+  );
+}
+
+export function FigmaMarketPage() {
+  const locale = (useLocale() === "ko" ? "ko" : "en") as MarketLocale;
+  const text = COPY[locale];
+  const [activeIndexKey, setActiveIndexKey] = useState<string>("oss");
+  const activeIndex =
+    MARKET_INDEX_DATA.find((card) => card.key === activeIndexKey) ??
+    MARKET_INDEX_DATA[0] ??
+    INDEX_CARDS[0];
+
+  return (
+    <div className="space-y-5 font-figma-body">
+      <section className="relative left-1/2 -mt-5 w-screen -translate-x-1/2 border-b border-[#2b2f36] bg-[rgba(30,32,38,0.3)]">
+        <div className="mx-auto flex w-full max-w-[1232px] flex-col gap-4 px-4 py-5 sm:px-6 xl:px-0">
+          <div>
+            <h1 className="text-[24px] font-bold leading-8 text-[#d1d4dc]">{text.pageTitle}</h1>
+            <p className="mt-1 text-[12px] leading-4 text-[#848e9c]">{text.pageDescription}</p>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            {SUMMARY_CARDS.map((card) => (
+              <SummaryCard key={card.key} card={card} locale={locale} />
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <SectionHeader title={text.indexesTitle} />
+        <MarketPanel className="space-y-4 p-4">
+          <div>
+            <p className="text-[10px] leading-[15px] text-[#848e9c]">{activeIndex.eyebrow[locale]}</p>
+            <h3 className="mt-0.5 text-[18px] font-bold leading-7 text-[#d1d4dc]">{activeIndex.label}</h3>
+          </div>
+          <AdvancedChart activeIndex={activeIndex} locale={locale} />
+        </MarketPanel>
+
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+          {MARKET_INDEX_DATA.map((card) => (
+            <IndexCard
+              key={card.key}
+              active={card.key === activeIndex.key}
+              card={card}
+              locale={locale}
+              onSelect={setActiveIndexKey}
+            />
+          ))}
+        </div>
+      </section>
+
+      <RegimeBar locale={locale} />
+      <HeatmapSection locale={locale} />
+
+      <MarketPanel className="p-4">
+        <SectionHeader
+          title={text.stocksTitle}
+          action={
+            <div className="hidden items-center gap-2 md:flex">
+              <button
+                aria-label="Change layout"
+                className="inline-flex h-6 w-6 items-center justify-center rounded-[4px] bg-[rgba(51,102,255,0.1)] text-[#3366ff]"
+                type="button"
+              >
+                <svg aria-hidden="true" className="h-3.5 w-3.5" fill="none" viewBox="0 0 14 14">
+                  <rect height="4" rx="0.8" stroke="currentColor" strokeWidth="1.1" width="4" x="2" y="2" />
+                  <rect height="4" rx="0.8" stroke="currentColor" strokeWidth="1.1" width="4" x="8" y="2" />
+                  <rect height="4" rx="0.8" stroke="currentColor" strokeWidth="1.1" width="4" x="2" y="8" />
+                  <rect height="4" rx="0.8" stroke="currentColor" strokeWidth="1.1" width="4" x="8" y="8" />
+                </svg>
+              </button>
+              <span className="text-[10px] leading-[15px] text-[#848e9c]">{text.stocksAction}</span>
+            </div>
+          }
+        />
+
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          {MARKET_STOCK_DATA.map((stock) => (
+            <StockCard key={stock.key} locale={locale} stock={stock} />
+          ))}
+        </div>
+      </MarketPanel>
+    </div>
+  );
+}
