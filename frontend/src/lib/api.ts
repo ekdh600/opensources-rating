@@ -35,15 +35,20 @@ function readErrorMessage(text: string): string {
   return slice || "(본문 없음)";
 }
 
-async function fetchAPI<T>(path: string, options?: RequestInit): Promise<T> {
+function buildHeaders(headers?: HeadersInit, accessToken?: string): HeadersInit {
+  return {
+    "Content-Type": "application/json",
+    ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+    ...headers,
+  };
+}
+
+async function fetchAPI<T>(path: string, options?: RequestInit, accessToken?: string): Promise<T> {
   const base = getApiBaseUrl();
   const url = path.startsWith("http") ? path : `${base}${path}`;
   const res = await fetch(url, {
     ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...options?.headers,
-    },
+    headers: buildHeaders(options?.headers, accessToken),
   });
   const text = await res.text();
   if (!res.ok) {
@@ -105,6 +110,49 @@ async function fetchCompareAPI<T>(pathWithQuery: string): Promise<T> {
 }
 
 export const api = {
+  auth: {
+    register: (body: {
+      username: string;
+      email: string;
+      display_name: string;
+      password: string;
+    }) =>
+      fetchAPI<{ message: string }>(`/api/v1/auth/register`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    login: (body: { username: string; password: string }) =>
+      fetchAPI<{ access_token: string; token_type: string }>(`/api/v1/auth/login`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    requestEmailVerification: (body: { email: string }) =>
+      fetchAPI<{ message: string }>(`/api/v1/auth/verify-email/request`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    confirmEmailVerification: (body: { token: string }) =>
+      fetchAPI<{ message: string }>(`/api/v1/auth/verify-email/confirm`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    recoverId: (body: { email: string }) =>
+      fetchAPI<{ message: string }>(`/api/v1/auth/recover-id`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    requestPasswordReset: (body: { email: string; username?: string }) =>
+      fetchAPI<{ message: string }>(`/api/v1/auth/password-reset/request`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    confirmPasswordReset: (body: { token: string; new_password: string }) =>
+      fetchAPI<{ message: string }>(`/api/v1/auth/password-reset/confirm`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    me: (accessToken: string) => fetchAPI<any>(`/api/v1/auth/me`, undefined, accessToken),
+  },
   projects: {
     list: (params?: Record<string, string>) => {
       const qs = params ? "?" + new URLSearchParams(params).toString() : "";
@@ -146,5 +194,50 @@ export const api = {
   search: (q: string) => fetchAPI<any>(`/api/v1/search?q=${encodeURIComponent(q)}`),
   scoring: {
     explain: (slug: string) => fetchAPI<any>(`/api/v1/scoring/explain/${slug}`),
+  },
+  trading: {
+    quotes: (limit = 20) => fetchAPI<any[]>(`/api/v1/trading/quotes?limit=${limit}`),
+    portfolio: (accessToken: string) => fetchAPI<any>(`/api/v1/trading/portfolio`, undefined, accessToken),
+    orders: (accessToken: string, limit = 50) =>
+      fetchAPI<any[]>(`/api/v1/trading/orders?limit=${limit}`, undefined, accessToken),
+    createOrder: (
+      accessToken: string,
+      body: {
+        project_slug: string;
+        side: "buy" | "sell";
+        quantity: number;
+      },
+    ) =>
+      fetchAPI<any>(
+        `/api/v1/trading/orders`,
+        {
+          method: "POST",
+          body: JSON.stringify(body),
+        },
+        accessToken,
+      ),
+    comments: (accessToken: string, slug: string) =>
+      fetchAPI<any[]>(`/api/v1/trading/projects/${slug}/comments`, undefined, accessToken),
+    createComment: (
+      accessToken: string,
+      slug: string,
+      body: { content: string; parent_id?: number | null },
+    ) =>
+      fetchAPI<any>(
+        `/api/v1/trading/projects/${slug}/comments`,
+        {
+          method: "POST",
+          body: JSON.stringify(body),
+        },
+        accessToken,
+      ),
+    toggleCommentRecommendation: (accessToken: string, commentId: number) =>
+      fetchAPI<any>(
+        `/api/v1/trading/comments/${commentId}/recommend`,
+        {
+          method: "POST",
+        },
+        accessToken,
+      ),
   },
 };

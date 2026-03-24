@@ -7,7 +7,6 @@ import {
   BarChart,
   CartesianGrid,
   ComposedChart,
-  Legend,
   Line,
   ResponsiveContainer,
   Tooltip,
@@ -16,6 +15,7 @@ import {
 } from "recharts";
 import { Link } from "@/i18n/routing";
 import { MarketPanel } from "@/components/market/MarketUi";
+import { cn } from "@/lib/utils";
 import {
   MARKET_HEATMAP_TILES as MARKET_HEATMAP_DATA,
   MARKET_HOME_STOCKS as MARKET_STOCK_DATA,
@@ -26,6 +26,7 @@ type MarketLocale = "ko" | "en";
 type Localized = Record<MarketLocale, string>;
 type TrendTone = "up" | "down" | "neutral";
 type TimeframeKey = "1h" | "4h" | "1d" | "1w" | "1m";
+type ChartSeriesKey = "closeBar" | "close" | "ma5" | "ma20";
 
 interface ChartMetric {
   label: Localized;
@@ -49,6 +50,7 @@ interface MarketChartPoint {
   date: string;
   label: string;
   value: number;
+  closeBar: number;
   open: number;
   high: number;
   low: number;
@@ -388,6 +390,129 @@ function sampleSparkValue(values: number[], index: number, total: number) {
   return values[mappedIndex] ?? values[values.length - 1] ?? 50;
 }
 
+function smoothSeries(values: number[], strength = 0.35) {
+  return values.map((value, index) => {
+    const previous = values[index - 1] ?? value;
+    const current = value;
+    const next = values[index + 1] ?? value;
+    return Number((((previous + current * (1 + strength) + next) / (3 + strength)).toFixed(3)));
+  });
+}
+
+function densifySeries(
+  values: number[],
+  bars: number[],
+  dates: string[],
+  targetCount: number,
+) {
+  if (values.length >= targetCount || values.length < 2) {
+    return { values, bars, dates };
+  }
+
+  const lastIndex = values.length - 1;
+  const densifiedValues: number[] = [];
+  const densifiedBars: number[] = [];
+  const densifiedDates: string[] = [];
+
+  for (let index = 0; index < targetCount; index += 1) {
+    const ratio = (index / Math.max(targetCount - 1, 1)) * lastIndex;
+    const leftIndex = Math.floor(ratio);
+    const rightIndex = Math.min(lastIndex, leftIndex + 1);
+    const blend = ratio - leftIndex;
+
+    const leftValue = values[leftIndex] ?? values[0] ?? 0;
+    const rightValue = values[rightIndex] ?? leftValue;
+    const leftBar = bars[leftIndex] ?? bars[0] ?? 0;
+    const rightBar = bars[rightIndex] ?? leftBar;
+
+    densifiedValues.push(Number((leftValue + (rightValue - leftValue) * blend).toFixed(3)));
+    densifiedBars.push(Math.round(leftBar + (rightBar - leftBar) * blend));
+
+    const originalSlot = Math.round(ratio);
+    densifiedDates.push(index === 0 || index === targetCount - 1 || Math.abs(ratio - originalSlot) < 0.001 ? dates[originalSlot] ?? "" : "");
+  }
+
+  return {
+    values: densifiedValues,
+    bars: densifiedBars,
+    dates: densifiedDates,
+  };
+}
+
+function emphasizeBarContrast(values: number[], strength: number) {
+  if (values.length === 0) {
+    return values;
+  }
+
+  const average = values.reduce((sum, value) => sum + value, 0) / values.length;
+  return values.map((value) => Math.max(80, Math.round(average + (value - average) * strength)));
+}
+
+function stretchBarContrast(values: number[], minFillRatio: number, exponent: number) {
+  if (values.length === 0) {
+    return values;
+  }
+
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min;
+
+  if (range <= 0) {
+    return values;
+  }
+
+  const visualMax = max;
+  const visualMin = Math.max(80, Math.round(visualMax * minFillRatio));
+
+  return values.map((value) => {
+    const normalized = (value - min) / range;
+    const stretched = visualMin + Math.pow(normalized, exponent) * (visualMax - visualMin);
+    return Math.round(stretched);
+  });
+}
+
+function enforceVisualBarSpacing(
+  values: number[],
+  minGapRatio: number,
+  floorRatio: number,
+) {
+  if (values.length <= 1) {
+    return values;
+  }
+
+  const max = Math.max(...values);
+  const floor = Math.max(80, Math.round(max * floorRatio));
+  const gap = Math.max(6, Math.round(max * minGapRatio));
+
+  const ranked = values
+    .map((value, index) => ({ value, index }))
+    .sort((left, right) => left.value - right.value);
+
+  const spaced: number[] = new Array(values.length).fill(floor);
+  let cursor = floor;
+
+  ranked.forEach((entry, rank) => {
+    if (rank === 0) {
+      spaced[entry.index] = floor;
+      return;
+    }
+
+    cursor = Math.min(max, cursor + gap);
+    spaced[entry.index] = cursor;
+  });
+
+  const originalMin = Math.min(...values);
+  const originalMax = Math.max(...values);
+  const originalRange = Math.max(1, originalMax - originalMin);
+
+  return values.map((value, index) => {
+    const normalized = (value - originalMin) / originalRange;
+    const rankedValue = spaced[index];
+    const blended = rankedValue * 0.72 + (floor + normalized * (max - floor)) * 0.28;
+    return Math.round(Math.max(floor, Math.min(max, blended)));
+  });
+}
+
 function scaleAxisValues(labels: string[], scale: number) {
   return labels.map((label) => {
     if (!/\d/.test(label)) {
@@ -410,36 +535,113 @@ function buildIndexDataset(card: IndexCardData, timeframe: TimeframeKey): ChartD
   const volatility = INDEX_VOLATILITY[card.key] ?? 1;
   const sparkMomentum =
     ((card.spark[card.spark.length - 1] ?? 50) - (card.spark[0] ?? 50)) / 100;
-  const amplitude = 1 + sparkMomentum * 0.24;
+  const timeframeAmplitude =
+    timeframe === "1h" ? 0.34 : timeframe === "4h" ? 0.48 : timeframe === "1d" ? 0.72 : timeframe === "1w" ? 0.9 : 1.08;
+  const amplitude = 1 + sparkMomentum * 0.16 * timeframeAmplitude;
+  const offsetScale =
+    timeframe === "1h" ? 0.006 : timeframe === "4h" ? 0.009 : timeframe === "1d" ? 0.012 : timeframe === "1w" ? 0.015 : 0.018;
 
   let lineValues = base.lineValues.map((value, index) => {
     const sparkValue = sampleSparkValue(card.spark, index, base.lineValues.length);
-    const sparkOffset = ((sparkValue - 50) / 50) * targetClose * 0.02 * volatility;
+    const sparkOffset = ((sparkValue - 50) / 50) * targetClose * offsetScale * volatility;
     return value * scale * amplitude + sparkOffset;
   });
 
   const lineShift = targetClose - (lineValues[lineValues.length - 1] ?? targetClose);
-  lineValues = lineValues.map((value) => Number((value + lineShift).toFixed(3)));
+  lineValues = smoothSeries(
+    lineValues.map((value) => Number((value + lineShift).toFixed(3))),
+    timeframe === "1h" ? 0.28 : timeframe === "4h" ? 0.24 : timeframe === "1d" ? 0.22 : 0.18,
+  );
 
   const baseBarMax = Math.max(...base.bars, 1);
-  const volumeScale = 0.82 + Math.min(Math.abs(targetChange) / 6, 0.55) + Math.abs(sparkMomentum) * 0.35;
-  const bars = base.bars.map((value, index) => {
+  const volumeScale =
+    (timeframe === "1h" ? 0.88 : timeframe === "4h" ? 0.92 : 0.96) +
+    Math.min(Math.abs(targetChange) / 8, 0.32) +
+    Math.abs(sparkMomentum) * 0.18;
+  const rawBars = base.bars.map((value, index) => {
     const sparkValue = sampleSparkValue(card.spark, index, base.bars.length);
-    const sparkScale = 0.72 + sparkValue / 140;
+    const sparkScale = 0.82 + sparkValue / 180;
     return Math.max(Math.round((value / baseBarMax) * baseBarMax * volumeScale * sparkScale * volatility), 80);
   });
+  const contrastStrength =
+    card.key === "oss"
+      ? timeframe === "1h"
+        ? 1.55
+        : timeframe === "4h"
+          ? 1.48
+          : timeframe === "1d"
+            ? 1.36
+            : timeframe === "1w"
+              ? 1.3
+              : 1.24
+      : timeframe === "1h"
+        ? 1.28
+        : timeframe === "4h"
+          ? 1.22
+          : 1.16;
+  const contrastedBars = stretchBarContrast(
+    emphasizeBarContrast(rawBars, contrastStrength),
+    card.key === "oss"
+      ? timeframe === "1h"
+        ? 0.24
+        : timeframe === "4h"
+          ? 0.22
+          : timeframe === "1d"
+            ? 0.18
+            : timeframe === "1w"
+              ? 0.2
+              : 0.19
+      : timeframe === "1h"
+        ? 0.2
+        : timeframe === "4h"
+          ? 0.18
+          : 0.16,
+    card.key === "oss" ? 0.62 : 0.82,
+  );
+  const bars = enforceVisualBarSpacing(
+    contrastedBars,
+    card.key === "oss"
+      ? timeframe === "1h"
+        ? 0.048
+        : timeframe === "4h"
+          ? 0.044
+          : timeframe === "1d"
+            ? 0.03
+            : timeframe === "1w"
+              ? 0.04
+              : 0.038
+      : timeframe === "1h"
+        ? 0.032
+        : timeframe === "4h"
+          ? 0.03
+          : 0.026,
+    card.key === "oss"
+      ? timeframe === "1h"
+        ? 0.16
+        : timeframe === "4h"
+          ? 0.15
+          : timeframe === "1d"
+            ? 0.14
+            : 0.145
+      : 0.13,
+  );
 
   const openValue = lineValues[0] ?? targetClose;
   const closeValue = targetClose;
   const highValue = Math.max(...lineValues, closeValue + Math.abs(targetDelta) * 0.45);
   const lowValue = Math.min(...lineValues, closeValue - Math.abs(targetDelta) * 0.45);
 
+  const targetCount =
+    timeframe === "1h" ? 24 : timeframe === "4h" ? 20 : timeframe === "1w" ? 16 : timeframe === "1m" ? 18 : base.dates.length;
+  const densified = densifySeries(lineValues, bars, base.dates, targetCount);
+
   return {
     ...base,
     currentValue: formatNumberLike(base.currentValue, targetClose),
     changeValue: `${formatSignedNumber(targetDelta)} (${formatSignedPercent(targetChange)})`,
-    bars,
-    lineValues,
+    bars: densified.bars,
+    lineValues: densified.values,
+    dates: densified.dates,
     leftAxis: scaleAxisValues(base.leftAxis, scale),
     rightAxis: scaleAxisValues(base.rightAxis, volumeScale * volatility),
     metrics: base.metrics.map((metric) => {
@@ -472,23 +674,20 @@ function buildIndexDataset(card: IndexCardData, timeframe: TimeframeKey): ChartD
 
 function calculateMovingAverage(values: number[], period: number) {
   return values.map((_, index) => {
-    if (index < period - 1) {
-      return null;
-    }
-
-    const window = values.slice(index - period + 1, index + 1);
+    const start = Math.max(0, index - period + 1);
+    const window = values.slice(start, index + 1);
     return Number((window.reduce((sum, value) => sum + value, 0) / period).toFixed(3));
   });
 }
 
 function buildChartSeries(dataset: ChartDataset, timeframe: TimeframeKey): MarketChartPoint[] {
   const closes = dataset.lineValues;
-  const maxVolumeSeed = Math.max(...dataset.bars, 1);
+  const maxBarSeed = Math.max(...dataset.bars, 1);
 
   const rows = closes.map((close, index) => {
     const previousClose = index === 0 ? close * 0.996 : closes[index - 1] ?? close;
     const open = Number((index === 0 ? previousClose : previousClose + (close - previousClose) * 0.28).toFixed(3));
-    const spread = Math.max(dataset.bars[index] / maxVolumeSeed * close * 0.012, close * 0.0045);
+    const spread = Math.max((dataset.bars[index] / maxBarSeed) * close * 0.012, close * 0.0045);
     const high = Number((Math.max(open, close) + spread).toFixed(3));
     const low = Number((Math.min(open, close) - spread * 0.82).toFixed(3));
     const label = dataset.dates[index] ?? `${index}`;
@@ -503,6 +702,7 @@ function buildChartSeries(dataset: ChartDataset, timeframe: TimeframeKey): Marke
       date,
       label,
       value: close,
+      closeBar: dataset.bars[index] ?? 0,
       open,
       high,
       low,
@@ -604,6 +804,56 @@ function CustomVolumeTooltip({
       </div>
     </div>
   );
+}
+
+function chartSeriesDescriptions(locale: MarketLocale): Record<ChartSeriesKey, { label: string; color: string; body: string }> {
+  if (locale === "ko") {
+    return {
+      closeBar: {
+        label: "종가 막대",
+        color: "bg-[rgba(216,91,53,0.18)] text-[#d85b35] border-[rgba(216,91,53,0.28)]",
+        body: "각 막대는 해당 구간의 종가 레벨을 빠르게 비교하기 위한 컬럼입니다. 시간대별 상대 위치와 변화 폭을 한눈에 보여줍니다.",
+      },
+      close: {
+        label: "종가",
+        color: "bg-[rgba(78,140,255,0.16)] text-[#4e8cff] border-[rgba(78,140,255,0.28)]",
+        body: "종가는 각 구간이 끝날 때의 대표 지수 값입니다. 시장 흐름을 읽을 때 가장 기본이 되는 기준선입니다.",
+      },
+      ma5: {
+        label: "MA5",
+        color: "bg-[rgba(34,197,94,0.16)] text-[#22c55e] border-[rgba(34,197,94,0.28)]",
+        body: "MA5는 최근 5개 구간 종가의 평균선입니다. 단기 흐름이 가속되는지 또는 꺾이는지 빠르게 파악할 수 있습니다.",
+      },
+      ma20: {
+        label: "MA20",
+        color: "bg-[rgba(249,115,22,0.16)] text-[#f97316] border-[rgba(249,115,22,0.28)]",
+        body: "MA20은 최근 20개 구간 종가 평균선입니다. 단기 노이즈를 줄이고 중간 흐름의 방향성을 읽는 데 사용합니다.",
+      },
+    };
+  }
+
+  return {
+    closeBar: {
+      label: "Close Bars",
+      color: "bg-[rgba(216,91,53,0.18)] text-[#d85b35] border-[rgba(216,91,53,0.28)]",
+      body: "Each column represents the closing level for its interval, making relative movement and amplitude easier to scan.",
+    },
+    close: {
+      label: "Close",
+      color: "bg-[rgba(78,140,255,0.16)] text-[#4e8cff] border-[rgba(78,140,255,0.28)]",
+      body: "Close is the representative index value at the end of each interval and serves as the primary market baseline.",
+    },
+    ma5: {
+      label: "MA5",
+      color: "bg-[rgba(34,197,94,0.16)] text-[#22c55e] border-[rgba(34,197,94,0.28)]",
+      body: "MA5 is the average of the latest 5 closing intervals and helps identify short-term acceleration or pullback.",
+    },
+    ma20: {
+      label: "MA20",
+      color: "bg-[rgba(249,115,22,0.16)] text-[#f97316] border-[rgba(249,115,22,0.28)]",
+      body: "MA20 smooths the latest 20 closing intervals to show the medium-term direction with less noise.",
+    },
+  };
 }
 
 const HEATMAP_TILES: HeatTileData[] = [
@@ -1011,9 +1261,11 @@ function AdvancedChart({
   activeIndex: IndexCardData;
 }) {
   const text = COPY[locale];
+  const seriesDescriptions = chartSeriesDescriptions(locale);
   const timeframeKeys: TimeframeKey[] = ["1h", "4h", "1d", "1w", "1m"];
   const [selectedTimeframe, setSelectedTimeframe] = useState<TimeframeKey>("1d");
   const [isExpanded, setIsExpanded] = useState(false);
+  const [hoveredSeries, setHoveredSeries] = useState<ChartSeriesKey>("close");
 
   const dataset = buildIndexDataset(activeIndex, selectedTimeframe);
   const changeTone = dataset.changeValue.startsWith("-") ? "text-[#1261c4]" : "text-[#c84a31]";
@@ -1091,40 +1343,94 @@ function AdvancedChart({
 
         <div className="mt-4 space-y-3">
           <div className="flex flex-wrap gap-2">
-            <span className="rounded-[4px] bg-[rgba(34,197,94,0.2)] px-2 py-1 text-[8px] font-semibold leading-[10px] text-[#22c55e]">
-              MA5
-            </span>
-            <span className="rounded-[4px] bg-[rgba(249,115,22,0.2)] px-2 py-1 text-[8px] font-semibold leading-[10px] text-[#f97316]">
-              MA20
-            </span>
-            <span className="rounded-[4px] bg-[rgba(245,158,11,0.2)] px-2 py-1 text-[8px] font-semibold leading-[10px] text-[#f59e0b]">
-              MA60
-            </span>
+            {(Object.entries(seriesDescriptions) as Array<[ChartSeriesKey, (typeof seriesDescriptions)[ChartSeriesKey]]>).map(([key, item]) => (
+              <button
+                key={key}
+                type="button"
+                onMouseEnter={() => setHoveredSeries(key)}
+                onFocus={() => setHoveredSeries(key)}
+                className={cn(
+                  "rounded-[4px] border px-2 py-1 text-[8px] font-semibold leading-[10px] transition",
+                  item.color,
+                  hoveredSeries === key && "shadow-[0_0_0_1px_rgba(255,255,255,0.08)]",
+                )}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="rounded-[6px] border border-[#2b2f36] bg-[#11161f] px-3 py-3">
+            <p className="text-[10px] uppercase tracking-[0.8px] text-[#6f7c8f]">
+              {locale === "ko" ? "시리즈 설명" : "Series guide"}
+            </p>
+            <p className="mt-2 text-[12px] font-semibold text-[#d1d4dc]">{seriesDescriptions[hoveredSeries].label}</p>
+            <p className="mt-1 text-[12px] leading-6 text-[#9aa4b2]">{seriesDescriptions[hoveredSeries].body}</p>
           </div>
 
           <div className="market-scroll overflow-x-auto">
             <div className={dataset.dates.length > 12 ? "min-w-[1024px]" : "min-w-[760px]"}>
               <div style={{ height: `${priceAreaHeight}px`, minWidth: "760px" }}>
                 <ResponsiveContainer height="100%" width="100%">
-                  <ComposedChart data={chartData} syncId="ossMarket" margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
+                  <ComposedChart data={chartData} syncId="ossMarket" barCategoryGap="6%" barGap={0} margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
                     <CartesianGrid stroke="#2b2f36" strokeDasharray="3 3" vertical={false} />
                     <XAxis dataKey="label" minTickGap={16} stroke="#6c7284" tick={{ fill: "#6c7284", fontSize: 10 }} />
                     <YAxis
+                      yAxisId="price"
                       domain={["dataMin - 8", "dataMax + 8"]}
                       stroke="#6c7284"
                       tick={{ fill: "#6c7284", fontSize: 10 }}
                       tickFormatter={(value: number) => value.toLocaleString("en-US", { maximumFractionDigits: 3 })}
                     />
+                    <YAxis yAxisId="bars" domain={[0, "dataMax"]} hide />
                     <Tooltip content={<CustomPriceTooltip />} />
-                    <Legend verticalAlign="top" align="left" iconType="line" wrapperStyle={{ fontSize: "10px", color: "#848e9c" }} />
-                    <Bar dataKey="close" fill="#d85b35" fillOpacity={0.24} radius={[2, 2, 0, 0]} name="종가 막대" />
-                    <Line dataKey="close" dot={false} name="종가" stroke="#4e8cff" strokeWidth={2} type="monotone" />
-                    <Line dataKey="ma5" dot={false} name="MA5" stroke="#22c55e" strokeWidth={1.5} type="monotone" />
-                    <Line dataKey="ma20" dot={false} name="MA20" stroke="#f97316" strokeWidth={1.5} type="monotone" />
-                    <Line dataKey="ma60" dot={false} name="MA60" stroke="#f59e0b" strokeWidth={1.5} type="monotone" />
-                    <Line dataKey="open" hide dot={false} stroke="#000000" />
-                    <Line dataKey="high" hide dot={false} stroke="#000000" />
-                    <Line dataKey="low" hide dot={false} stroke="#000000" />
+                    <Bar
+                      dataKey="closeBar"
+                      fill="#d85b35"
+                      fillOpacity={0.42}
+                      maxBarSize={26}
+                      radius={[2, 2, 0, 0]}
+                      yAxisId="bars"
+                      name="종가 막대"
+                      onMouseEnter={() => setHoveredSeries("closeBar")}
+                      onMouseMove={() => setHoveredSeries("closeBar")}
+                    />
+                    <Line
+                      connectNulls
+                      dataKey="close"
+                      dot={false}
+                      name="종가"
+                      stroke="#4e8cff"
+                      strokeWidth={2}
+                      type="monotone"
+                      yAxisId="price"
+                      onMouseEnter={() => setHoveredSeries("close")}
+                      onMouseMove={() => setHoveredSeries("close")}
+                    />
+                    <Line
+                      connectNulls
+                      dataKey="ma5"
+                      dot={false}
+                      name="MA5"
+                      stroke="#22c55e"
+                      strokeWidth={1.5}
+                      type="monotone"
+                      yAxisId="price"
+                      onMouseEnter={() => setHoveredSeries("ma5")}
+                      onMouseMove={() => setHoveredSeries("ma5")}
+                    />
+                    <Line
+                      connectNulls
+                      dataKey="ma20"
+                      dot={false}
+                      name="MA20"
+                      stroke="#f97316"
+                      strokeWidth={1.5}
+                      type="monotone"
+                      yAxisId="price"
+                      onMouseEnter={() => setHoveredSeries("ma20")}
+                      onMouseMove={() => setHoveredSeries("ma20")}
+                    />
                   </ComposedChart>
                 </ResponsiveContainer>
               </div>

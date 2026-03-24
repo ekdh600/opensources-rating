@@ -1,11 +1,13 @@
-"""간소화된 JWT 인증 — 예측 시장 참여용"""
+"""Authentication helpers."""
 
 from datetime import datetime, timedelta
-from hashlib import sha256
+from hashlib import pbkdf2_hmac, sha256
+import hmac
+import secrets
 
 import jwt
 from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,14 +16,30 @@ from app.core.database import get_db
 from app.models.user import User
 
 security = HTTPBearer(auto_error=False)
+PBKDF2_ITERATIONS = 120_000
 
 
 def hash_password(password: str) -> str:
-    return sha256(password.encode()).hexdigest()
+    salt = secrets.token_hex(16)
+    derived = pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), PBKDF2_ITERATIONS)
+    return f"pbkdf2_sha256${PBKDF2_ITERATIONS}${salt}${derived.hex()}"
 
 
 def verify_password(password: str, hashed: str) -> bool:
-    return hash_password(password) == hashed
+    if hashed.startswith("pbkdf2_sha256$"):
+      _, iteration_text, salt, digest = hashed.split("$", 3)
+      candidate = pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), int(iteration_text)).hex()
+      return hmac.compare_digest(candidate, digest)
+    legacy = sha256(password.encode("utf-8")).hexdigest()
+    return hmac.compare_digest(legacy, hashed)
+
+
+def generate_raw_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def hash_token(token: str) -> str:
+    return sha256(token.encode("utf-8")).hexdigest()
 
 
 def create_access_token(user_id: int) -> str:
@@ -45,17 +63,17 @@ async def get_current_user(
     db: AsyncSession = Depends(get_db),
 ) -> User:
     if not credentials:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="인증이 필요합니다")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="인증이 필요합니다.")
 
     user_id = decode_token(credentials.credentials)
     if user_id is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="유효하지 않은 토큰입니다")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="유효하지 않은 토큰입니다.")
 
     stmt = select(User).where(User.id == user_id, User.is_active.is_(True))
     result = await db.execute(stmt)
     user = result.scalar_one_or_none()
     if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="사용자를 찾을 수 없습니다")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="사용자를 찾을 수 없습니다.")
 
     return user
 

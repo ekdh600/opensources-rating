@@ -1,8 +1,8 @@
-"""사용자 모델 — 예측 시장 참여를 위한 기본 사용자"""
+"""User and auth-related models."""
 
 from datetime import datetime
 
-from sqlalchemy import String, Integer, Float, Boolean, DateTime, Index
+from sqlalchemy import Boolean, DateTime, Float, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -16,20 +16,18 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     display_name: Mapped[str] = mapped_column(String(100), nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    email_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime)
 
-    # 가상 포인트
     points_balance: Mapped[int] = mapped_column(Integer, default=10000)
     points_total_earned: Mapped[int] = mapped_column(Integer, default=0)
 
-    # 레벨 시스템 (§20.7)
     level: Mapped[int] = mapped_column(Integer, default=1)
     experience: Mapped[int] = mapped_column(Integer, default=0)
 
-    # 누적 평판 점수 (§20.9)
     reputation_score: Mapped[float] = mapped_column(Float, default=0.0)
     foresight_score: Mapped[float] = mapped_column(Float, default=0.0)
 
-    # 통계
     total_predictions: Mapped[int] = mapped_column(Integer, default=0)
     total_hits: Mapped[int] = mapped_column(Integer, default=0)
     current_streak: Mapped[int] = mapped_column(Integer, default=0)
@@ -44,3 +42,24 @@ class User(Base):
         Index("ix_users_reputation", "reputation_score"),
         Index("ix_users_level", "level"),
     )
+
+
+class AuthToken(Base):
+    __tablename__ = "auth_tokens"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(nullable=False, index=True)
+    purpose: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class PasswordHistory(Base):
+    __tablename__ = "password_history"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(nullable=False, index=True)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
