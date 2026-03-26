@@ -10,12 +10,15 @@ const NAV_ITEMS = [
   { key: "market", href: "/market", label: { ko: "시장", en: "Market" } },
   { key: "trading", href: "/market/trading", label: { ko: "트레이딩", en: "Trading" } },
   { key: "analysis", href: "/market/analysis", label: { ko: "분석", en: "Analysis" } },
-  { key: "methodology", href: "/market/methodology", label: { ko: "계산 방식", en: "Methodology" } },
-  { key: "screener", href: "/market/screener", label: { ko: "스크리너", en: "Screener" } },
-  { key: "portfolio", href: "/market/my-positions", label: { ko: "포트폴리오", en: "Portfolio" } },
-  { key: "ranking", href: "/market/season", label: { ko: "랭킹", en: "Ranking" } },
+  { key: "ranking", href: "/market/season", label: { ko: "유저 랭킹", en: "User Ranking" } },
   { key: "badges", href: "/market/badges", label: { ko: "뱃지", en: "Badges" } },
+  { key: "methodology", href: "/market/methodology", label: { ko: "계산 방식", en: "Methodology" } },
   { key: "design", href: "/market/design", label: { ko: "디자인", en: "Design" } },
+] as const;
+
+const ACCOUNT_ITEMS = [
+  { key: "account", href: "/market/account", label: { ko: "마이페이지", en: "My Page" } },
+  { key: "portfolio", href: "/market/my-positions", label: { ko: "포트폴리오", en: "Portfolio" } },
 ] as const;
 
 function isActive(pathname: string, href: string) {
@@ -95,12 +98,34 @@ function NavIcon({ kind }: { kind: string }) {
   );
 }
 
+function AccountNavLink({
+  href,
+  label,
+  active,
+}: {
+  href: string;
+  label: string;
+  active: boolean;
+}) {
+  return (
+    <Link
+      href={href}
+      className={`inline-flex h-8 items-center rounded-[4px] border px-3 text-[12px] font-medium transition ${
+        active
+          ? "border-[rgba(51,102,255,0.22)] bg-[rgba(51,102,255,0.1)] text-[#d1d4dc]"
+          : "border-[#2b2f36] bg-[#161b24] text-[#d1d4dc] hover:border-[#3a4252]"
+      }`}
+    >
+      {label}
+    </Link>
+  );
+}
+
 export function MarketHeader() {
   const locale = (useLocale() === "ko" ? "ko" : "en") as MarketLocale;
   const pathname = usePathname();
   const { session, hydrated } = useTradingSessionState();
-  const actionLabel = session ? (locale === "ko" ? "마이페이지" : "My Page") : (locale === "ko" ? "로그인" : "Login");
-  const actionHref = session ? "/market/account" : "/market/auth";
+  const loginLabel = locale === "ko" ? "로그인" : "Login";
 
   return (
     <header className="border-b border-[#2b2f36] bg-[#1e2026]">
@@ -110,7 +135,7 @@ export function MarketHeader() {
             <div className="flex h-7 w-7 items-center justify-center rounded-[4px] bg-[rgba(51,102,255,0.1)]">
               <BrandIcon />
             </div>
-            <span className="truncate text-[14px] font-bold leading-5 text-[#d1d4dc]">OSS Market</span>
+            <span className="truncate text-[14px] font-bold leading-5 text-[#d1d4dc]">오픈소스 트레이딩</span>
           </Link>
           <nav className="hidden items-center gap-1 md:flex">
             {NAV_ITEMS.map((item) => {
@@ -132,12 +157,25 @@ export function MarketHeader() {
         </div>
         <div className="hidden items-center gap-3 md:flex">
           <span className="text-[10px] leading-[15px] text-[#848e9c]">Season 2026-Q1</span>
-          <Link
-            href={hydrated ? actionHref : "/market/auth"}
-            className="inline-flex h-8 items-center rounded-[4px] border border-[rgba(51,102,255,0.22)] bg-[rgba(51,102,255,0.1)] px-3 text-[12px] font-medium text-[#d1d4dc] transition hover:bg-[rgba(51,102,255,0.16)]"
-          >
-            {hydrated ? actionLabel : locale === "ko" ? "로그인" : "Login"}
-          </Link>
+          {hydrated && session ? (
+            <>
+              {ACCOUNT_ITEMS.map((item) => (
+                <AccountNavLink
+                  key={item.href}
+                  href={item.href}
+                  label={item.label[locale]}
+                  active={isActive(pathname, item.href)}
+                />
+              ))}
+            </>
+          ) : (
+            <Link
+              href="/market/auth"
+              className="inline-flex h-8 items-center rounded-[4px] border border-[rgba(51,102,255,0.22)] bg-[rgba(51,102,255,0.1)] px-3 text-[12px] font-medium text-[#d1d4dc] transition hover:bg-[rgba(51,102,255,0.16)]"
+            >
+              {loginLabel}
+            </Link>
+          )}
           {hydrated && session ? (
             <button
               type="button"
@@ -165,12 +203,28 @@ export function MarketHeader() {
             </Link>
           );
         })}
-        <Link
-          href={hydrated ? actionHref : "/market/auth"}
-          className="inline-flex h-7 shrink-0 items-center rounded-[4px] border border-[rgba(51,102,255,0.22)] bg-[rgba(51,102,255,0.1)] px-3 text-[12px] font-medium leading-4 text-[#d1d4dc]"
-        >
-          {hydrated ? actionLabel : locale === "ko" ? "로그인" : "Login"}
-        </Link>
+        {hydrated && session ? (
+          ACCOUNT_ITEMS.map((item) => (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={`inline-flex h-7 shrink-0 items-center rounded-[4px] border px-3 text-[12px] font-medium leading-4 ${
+                isActive(pathname, item.href)
+                  ? "border-[rgba(51,102,255,0.22)] bg-[rgba(51,102,255,0.1)] text-[#d1d4dc]"
+                  : "border-[#2b2f36] bg-[#161b24] text-[#d1d4dc]"
+              }`}
+            >
+              {item.label[locale]}
+            </Link>
+          ))
+        ) : (
+          <Link
+            href="/market/auth"
+            className="inline-flex h-7 shrink-0 items-center rounded-[4px] border border-[rgba(51,102,255,0.22)] bg-[rgba(51,102,255,0.1)] px-3 text-[12px] font-medium leading-4 text-[#d1d4dc]"
+          >
+            {loginLabel}
+          </Link>
+        )}
         {hydrated && session ? (
           <button
             type="button"
@@ -193,7 +247,7 @@ export function MarketFooter() {
     <footer className="border-t border-[#2b2f36] bg-[#181c21]">
       <div className="mx-auto flex w-full max-w-[1680px] flex-col gap-3 px-4 py-[21px] text-[10px] leading-[15px] text-[#848e9c] sm:px-6 md:flex-row md:items-end md:justify-between 2xl:px-8">
         <div className="space-y-0.5">
-          <p>© 2026 OSS Market. 이 서비스는 실제 금융 거래 플랫폼이 아닙니다.</p>
+          <p>© 2026 오픈소스 트레이딩. 이 서비스는 실제 금융 거래 플랫폼이 아닙니다.</p>
           <p>오픈소스 프로젝트 데이터를 시장 메타포로 해석한 분석 도구입니다.</p>
         </div>
         <p className="text-[9px] leading-[13.5px]">{metaLabel}</p>

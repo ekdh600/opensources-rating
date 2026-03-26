@@ -19,21 +19,41 @@ celery_app.conf.update(
     timezone="Asia/Seoul",
     enable_utc=True,
     beat_schedule={
-        "collect-github-hourly": {
+        "collect-github-midnight": {
             "task": "app.jobs.tasks.collect_github_all",
-            "schedule": crontab(minute=0),
+            "schedule": crontab(minute=0, hour=0),
         },
-        "collect-ossinsight-3h": {
+        "collect-github-daytime": {
+            "task": "app.jobs.tasks.collect_github_all",
+            "schedule": crontab(minute=30, hour="6,12,18"),
+        },
+        "collect-ossinsight-midnight": {
             "task": "app.jobs.tasks.collect_ossinsight_all",
-            "schedule": crontab(minute=0, hour="*/3"),
+            "schedule": crontab(minute=0, hour=0),
         },
-        "compute-scores-daily": {
+        "collect-ossinsight-daytime": {
+            "task": "app.jobs.tasks.collect_ossinsight_all",
+            "schedule": crontab(minute=30, hour="6,12,18"),
+        },
+        "compute-scores-midnight": {
             "task": "app.jobs.tasks.compute_all_scores",
-            "schedule": crontab(minute=30, hour=2),
+            "schedule": crontab(minute=30, hour=0),
         },
-        "generate-explanations-daily": {
-            "task": "app.jobs.tasks.generate_all_explanations",
-            "schedule": crontab(minute=0, hour=3),
+        "compute-scores-daytime": {
+            "task": "app.jobs.tasks.compute_all_scores",
+            "schedule": crontab(minute=0, hour="7,13,19"),
+        },
+        "publish-market-snapshot-midnight": {
+            "task": "app.jobs.tasks.publish_market_snapshot",
+            "schedule": crontab(minute=40, hour=0),
+        },
+        "publish-market-snapshot-daytime": {
+            "task": "app.jobs.tasks.publish_market_snapshot",
+            "schedule": crontab(minute=10, hour="7,13,19"),
+        },
+        "refresh-market-news-and-explanations-twice": {
+            "task": "app.jobs.tasks.refresh_market_news_and_explanations",
+            "schedule": crontab(minute=20, hour="1,19"),
         },
     },
 )

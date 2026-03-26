@@ -125,7 +125,7 @@ async def _build_comment_view(
 
 @router.get("/quotes", response_model=list[TradingQuoteOut])
 async def list_quotes(
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(20, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
 ):
     projects = (await db.execute(select(Project).where(Project.is_active.is_(True)).order_by(Project.id))).scalars().all()

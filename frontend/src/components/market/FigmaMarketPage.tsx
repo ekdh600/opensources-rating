@@ -154,12 +154,12 @@ interface CategoryApi {
 
 const COPY = {
   ko: {
-    pageTitle: "OSS 시장",
+    pageTitle: "오픈소스 트레이딩",
     pageDescription: "오픈소스 프로젝트의 흐름을 시장 메타포로 해석한 데이터 분석 플랫폼",
     indexesTitle: "시장 지수",
     regimeTitle: "시장 현황: 상승장",
     regimeDescription: "시장은 현재 강한 상승 흐름을 보이고 있습니다",
-    chartTitle: "OSS Market Index",
+    chartTitle: "오픈소스 트레이딩 지수",
     heatmapTitle: "시장 히트맵",
     heatmapDescription: "붉은색은 강세, 파란색은 약세",
     stocksTitle: "주요 종목",
@@ -177,7 +177,7 @@ const COPY = {
     errorPrefix: "시장 데이터 반영 중 문제가 발생했습니다.",
     methodologyTitle: "데이터 출처와 계산 방식",
     methodologyBody:
-      "현재 화면의 시장 지수와 종목 가격은 백엔드 API 응답을 기반으로 계산한 OSS 게임 지표입니다. 실거래 가격이 아니라 프로젝트 점수 기반 지수입니다.",
+      "현재 화면의 시장 지수와 종목 가격은 백엔드 API 응답을 기반으로 계산한 오픈소스 트레이딩 게임 지표입니다. 실거래 가격이 아니라 프로젝트 점수 기반 지수입니다.",
     methodologyBullet1:
       "종목 현재가: /api/v1/trading/quotes 의 current_price이며, 각 프로젝트의 최신 total_score를 가격처럼 표시합니다.",
     methodologyBullet2:
@@ -194,14 +194,17 @@ const COPY = {
     regimeBearDescription: "실시간 지표 기준으로 주요 OSS 종목이 전반적으로 약세입니다.",
     regimeNeutralTitle: "시장 현황: 관망장",
     regimeNeutralDescription: "실시간 지표 기준으로 주요 OSS 종목이 뚜렷한 방향성 없이 움직이고 있습니다.",
+    topGainersTitle: "상승 종목",
+    topLosersTitle: "하락 종목",
+    movementEmpty: "표시할 종목이 아직 없습니다.",
   },
   en: {
-    pageTitle: "OSS Market",
+    pageTitle: "Open Source Trading",
     pageDescription: "A market-style analytics view that interprets open source project momentum as a tradable dashboard.",
     indexesTitle: "Market indices",
     regimeTitle: "Market regime: Bullish",
     regimeDescription: "The market is currently showing a strong upward trend.",
-    chartTitle: "OSS Market Index",
+    chartTitle: "Open Source Trading Index",
     heatmapTitle: "Market heatmap",
     heatmapDescription: "Red indicates strength, blue indicates weakness",
     stocksTitle: "Core stocks",
@@ -219,7 +222,7 @@ const COPY = {
     errorPrefix: "There was a problem loading live market data.",
     methodologyTitle: "Data Source and Methodology",
     methodologyBody:
-      "The market indices and instrument prices on this screen are API-backed OSS game metrics. They are score-based synthetic values, not real tradable market prices.",
+      "The market indices and instrument prices on this screen are API-backed open source trading game metrics. They are score-based synthetic values, not real tradable market prices.",
     methodologyBullet1:
       "Instrument price: current_price from /api/v1/trading/quotes, displayed from the latest project total_score.",
     methodologyBullet2:
@@ -236,6 +239,9 @@ const COPY = {
     regimeBearDescription: "Live signals show broad weakness across major OSS instruments.",
     regimeNeutralTitle: "Market regime: Sideways",
     regimeNeutralDescription: "Live signals show mixed movement without a strong directional trend.",
+    topGainersTitle: "Top Gainers",
+    topLosersTitle: "Top Losers",
+    movementEmpty: "No movers are available yet.",
   },
 } as const;
 
@@ -2096,6 +2102,51 @@ function MethodologyNotice({ locale }: { locale: MarketLocale }) {
   );
 }
 
+function MoversPanel({
+  title,
+  rows,
+  emptyLabel,
+}: {
+  title: string;
+  rows: TradingQuoteApi[];
+  emptyLabel: string;
+}) {
+  return (
+    <MarketPanel className="p-4">
+      <h2 className="text-[16px] font-semibold leading-6 text-[#d1d4dc]">{title}</h2>
+      {rows.length === 0 ? (
+        <p className="mt-3 text-[12px] leading-5 text-[#848e9c]">{emptyLabel}</p>
+      ) : (
+        <div className="mt-3 space-y-2.5">
+          {rows.map((quote, index) => {
+            const isUp = quote.change_rate >= 0;
+            return (
+              <div
+                key={`${title}-${quote.slug}`}
+                className="flex items-center justify-between gap-3 rounded-[6px] border border-[#2b2f36] bg-[#161b24] px-3 py-3"
+              >
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-medium text-[#848e9c]">#{index + 1}</span>
+                    <p className="truncate text-[13px] font-semibold text-[#d1d4dc]">{quote.name}</p>
+                  </div>
+                  <p className="mt-1 truncate text-[11px] text-[#848e9c]">{quote.category ?? "-"}</p>
+                </div>
+                <div className="text-right">
+                  <p className={cn("text-[13px] font-semibold", isUp ? "text-[#d6583a]" : "text-[#2f7de1]")}>
+                    {formatSignedPercentValue(quote.change_rate)}
+                  </p>
+                  <p className="mt-1 text-[11px] text-[#848e9c]">{formatDecimal(quote.current_price)}</p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </MarketPanel>
+  );
+}
+
 export function FigmaMarketPage() {
   const locale = (useLocale() === "ko" ? "ko" : "en") as MarketLocale;
   const text = COPY[locale];
@@ -2169,6 +2220,14 @@ export function FigmaMarketPage() {
     () => (quotes.length > 0 ? average(quotes.map((quote) => quote.change_rate)) : 0),
     [quotes],
   );
+  const topGainers = useMemo(
+    () => [...quotes].sort((left, right) => right.change_rate - left.change_rate).slice(0, 3),
+    [quotes],
+  );
+  const topLosers = useMemo(
+    () => [...quotes].sort((left, right) => left.change_rate - right.change_rate).slice(0, 3),
+    [quotes],
+  );
 
   useEffect(() => {
     if (indexCards.length === 0) {
@@ -2212,8 +2271,13 @@ export function FigmaMarketPage() {
         <SectionHeader title={text.indexesTitle} />
         <MarketPanel className="space-y-4 p-4">
           <div>
-            <p className="text-[10px] leading-[15px] text-[#848e9c]">{activeIndex.eyebrow[locale]}</p>
-            <h3 className="mt-0.5 text-[18px] font-bold leading-7 text-[#d1d4dc]">{activeIndex.label}</h3>
+            <p className="text-[10px] leading-[15px] text-[#848e9c]">{locale === "ko" ? "선택한 지수 흐름" : "Selected index trend"}</p>
+            <h3 className="mt-0.5 text-[18px] font-bold leading-7 text-[#d1d4dc]">{locale === "ko" ? "실시간 지수 차트" : "Live index chart"}</h3>
+            <p className="mt-1 text-[12px] leading-5 text-[#848e9c]">
+              {locale === "ko"
+                ? "아래 차트에서 선택한 지수의 현재값, 변동률, 시계열 흐름을 확인할 수 있습니다."
+                : "Review the selected index's latest value, change, and time-series trend in the chart below."}
+            </p>
           </div>
           <AdvancedChart activeIndex={activeIndex} locale={locale} />
         </MarketPanel>
@@ -2232,6 +2296,10 @@ export function FigmaMarketPage() {
       </section>
 
       <RegimeBar averageChangeRate={averageChangeRate} locale={locale} />
+      <section className="grid gap-3 xl:grid-cols-2">
+        <MoversPanel title={text.topGainersTitle} rows={topGainers} emptyLabel={text.movementEmpty} />
+        <MoversPanel title={text.topLosersTitle} rows={topLosers} emptyLabel={text.movementEmpty} />
+      </section>
       <MethodologyNotice locale={locale} />
       <HeatmapSection locale={locale} tiles={heatmapTiles} />
 

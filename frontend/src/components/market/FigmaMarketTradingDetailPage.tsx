@@ -431,7 +431,7 @@ export function FigmaMarketTradingDetailPage({ slug }: { slug: string }) {
     return (
       <MarketPanel className="px-6 py-8">
         <p className="text-[15px] font-semibold text-[#d1d4dc]">종목을 찾을 수 없습니다.</p>
-        <p className="mt-2 text-[13px] text-[#848e9c]">현재 거래 가능한 OSS 종목 목록에 없는 slug입니다.</p>
+        <p className="mt-2 text-[13px] text-[#848e9c]">현재 거래 가능한 오픈소스 종목 목록에 없는 slug입니다.</p>
       </MarketPanel>
     );
   }
@@ -452,7 +452,7 @@ export function FigmaMarketTradingDetailPage({ slug }: { slug: string }) {
                 Trading
               </Link>
               <span>/</span>
-              <span>{quote.category ?? "OSS"}</span>
+              <span>{quote.category ?? "오픈소스"}</span>
             </div>
 
             <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">

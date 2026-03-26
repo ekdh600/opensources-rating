@@ -159,6 +159,33 @@ def generate_all_explanations():
     _run_async(_generate_all_explanations())
 
 
+@celery_app.task(name="app.jobs.tasks.publish_market_snapshot")
+def publish_market_snapshot():
+    """현재 계산된 종목/인덱스 스냅샷 publish 단계"""
+    logger.info(
+        "market_snapshot_publish_requested",
+        published_at=datetime.utcnow().isoformat(),
+        note="placeholder task until snapshot publish pipeline is implemented",
+    )
+
+
+@celery_app.task(name="app.jobs.tasks.refresh_market_news_and_explanations")
+def refresh_market_news_and_explanations():
+    """시장 뉴스/해설 갱신 배치"""
+    _run_async(_refresh_market_news_and_explanations())
+
+
+async def _refresh_market_news_and_explanations():
+    # 현재는 explanation 생성만 운영 태스크로 존재하고, 뉴스는 seed 기반 구조다.
+    # 추후 KRSS 연동이 들어오면 이 자리에서 뉴스 수집/정제/매핑을 함께 수행한다.
+    await _generate_all_explanations()
+    logger.info(
+        "market_news_refresh_done",
+        refreshed_at=datetime.utcnow().isoformat(),
+        note="news ingestion is not yet automated; explanation refresh completed",
+    )
+
+
 async def _generate_all_explanations():
     from app.core.database import async_session_factory
     from app.models.project import Project

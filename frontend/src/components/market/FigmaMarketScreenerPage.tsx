@@ -29,8 +29,12 @@ interface ScreenerRow {
 
 const COPY = {
   ko: {
-    title: "OSS 종목 스크리너",
-    description: "조건 기반으로 원하는 오픈소스 프로젝트를 찾아보세요",
+    title: "OSS 기회 탐색",
+    description: "거래 전에 조건으로 후보 종목을 좁혀보는 탐색 전용 화면입니다",
+    roleLead: "탐색 중심",
+    roleBody: "로그인 없이도 점수, 변동률, 참여자 조건으로 관심 종목 후보를 빠르게 찾을 수 있습니다.",
+    tradeLead: "실행은 트레이딩에서",
+    tradeBody: "실제 주문과 포지션 관리는 트레이딩 탭에서 진행하고, 이 화면은 후보를 추리는 데 집중합니다.",
     placeholder: "프로젝트명 검색...",
     categories: "카테고리",
     scoreRange: "점수 범위",
@@ -44,8 +48,12 @@ const COPY = {
     emptyBody: "검색어 또는 필터 조건을 조정해 다시 확인해보세요.",
   },
   en: {
-    title: "OSS Stock Screener",
-    description: "Find open source projects with rule-based filtering",
+    title: "OSS Opportunity Finder",
+    description: "A discovery-first screen for narrowing candidates before you trade",
+    roleLead: "Discovery first",
+    roleBody: "Filter potential names quickly by score, change, and participation signals even before logging in.",
+    tradeLead: "Execution lives in Trading",
+    tradeBody: "Use Trading for orders and portfolio management; use this screen to narrow the field.",
     placeholder: "Search projects...",
     categories: "Categories",
     scoreRange: "Score range",
@@ -172,6 +180,17 @@ export function FigmaMarketScreenerPage() {
       <section className="space-y-2">
         <h1 className="text-[24px] font-bold leading-8 text-[#d1d4dc]">{text.title}</h1>
         <p className="text-[12px] leading-4 text-[#848e9c]">{text.description}</p>
+      </section>
+
+      <section className="grid gap-3 xl:grid-cols-2">
+        <MarketPanel className="px-4 py-4">
+          <p className="text-[10px] uppercase tracking-[0.08em] text-[#6f7c8f]">{text.roleLead}</p>
+          <p className="mt-2 text-[12px] leading-6 text-[#d1d4dc]">{text.roleBody}</p>
+        </MarketPanel>
+        <MarketPanel className="px-4 py-4">
+          <p className="text-[10px] uppercase tracking-[0.08em] text-[#6f7c8f]">{text.tradeLead}</p>
+          <p className="mt-2 text-[12px] leading-6 text-[#d1d4dc]">{text.tradeBody}</p>
+        </MarketPanel>
       </section>
 
       <div className="relative">

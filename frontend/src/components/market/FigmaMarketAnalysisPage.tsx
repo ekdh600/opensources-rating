@@ -10,6 +10,7 @@ import { api } from "@/lib/api";
 type MarketLocale = "ko" | "en";
 type Localized = Record<MarketLocale, string>;
 type Tone = "up" | "down" | "neutral";
+type CopyText = (typeof COPY)[MarketLocale];
 
 type Row = { rank: string; name: string; category: string; score: string; change: string; href: string };
 
@@ -51,6 +52,30 @@ type Event = {
   watch: Localized[];
   affected: string[];
   actions: Array<{ label: Localized; href: string }>;
+};
+
+type NewsArticleApi = {
+  id: number;
+  title: string;
+  summary_ko: string;
+  market_impact_ko?: string | null;
+  source_name: string;
+  source_type: string;
+  source_url: string;
+  canonical_url: string;
+  published_at: string;
+  collected_at: string;
+  importance_score: number;
+  interest_score: number;
+  final_score: number;
+  grade?: string | null;
+  status: string;
+  linked_projects: Array<{
+    slug: string;
+    name: string;
+    relation_type: string;
+    confidence: number;
+  }>;
 };
 
 interface TradingQuoteApi {
@@ -120,6 +145,16 @@ const COPY = {
     losersTitle: "오늘의 하락 종목",
     reportsTitle: "실시간 리서치 리포트",
     reportsDesc: "현재 API 데이터로 자동 생성한 리포트입니다.",
+    newsTitle: "OSS·IT 뉴스 플로우",
+    newsDesc: "KRSS형 수집 구조를 기준으로 정리한 헤드라인과 종목 연결 뉴스입니다.",
+    headlineNews: "전체 헤드라인",
+    projectNews: "종목 연결 뉴스",
+    marketStructure: "시장 구조",
+    marketStructureDesc: "상단 브리핑으로 전체 흐름을 읽고, 이어서 인사이트와 종목 흐름을 확인하는 구간입니다.",
+    rotating: "자동 로테이션",
+    source: "출처",
+    collectedAt: "수집",
+    marketImpact: "시장 해석",
     eventsTitle: "주요 관찰 이벤트",
     eventsDesc: "시즌 일정과 점수 변화 기준으로 지금 바로 볼 지점을 정리했습니다.",
     analyst: "담당 분석",
@@ -151,6 +186,16 @@ const COPY = {
     losersTitle: "Today's decliners",
     reportsTitle: "Live research reports",
     reportsDesc: "These reports are generated from the current API data.",
+    newsTitle: "OSS and IT News Flow",
+    newsDesc: "Headlines and project-linked coverage shaped for the market feed.",
+    headlineNews: "Headlines",
+    projectNews: "Project-linked news",
+    marketStructure: "Market Structure",
+    marketStructureDesc: "Read the top-down briefing first, then move into insights and name-by-name moves.",
+    rotating: "Auto rotation",
+    source: "Source",
+    collectedAt: "Collected",
+    marketImpact: "Market read",
     eventsTitle: "Watch events",
     eventsDesc: "What to watch now based on season timing and score movement.",
     analyst: "Analyst",
@@ -181,6 +226,17 @@ function average(values: number[]) {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
+function chunkItems<T>(items: T[], size: number) {
+  if (items.length === 0) {
+    return [] as T[][];
+  }
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
+}
+
 function toneFromChange(value: number): Tone {
   if (value > 0.001) {
     return "up";
@@ -208,6 +264,14 @@ function formatPercent(value: number) {
 function formatDateLabel(value: string) {
   const date = new Date(value);
   return `${date.getFullYear()}.${String(date.getMonth() + 1).padStart(2, "0")}.${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function formatDateTimeLabel(value: string) {
+  const date = new Date(value);
+  const datePart = formatDateLabel(value);
+  const hour = String(date.getHours()).padStart(2, "0");
+  const minute = String(date.getMinutes()).padStart(2, "0");
+  return `${datePart} ${hour}:${minute}`;
 }
 
 function formatCountdown(endDate: string, locale: MarketLocale) {
@@ -275,29 +339,189 @@ function BulletList({ title, items }: { title: string; items: string[] }) {
   );
 }
 
-function MovementTable({ title, rows, tone }: { title: string; rows: Row[]; tone: Tone }) {
+function MoverCarousel({
+  title,
+  rows,
+  tone,
+  pageIndex,
+  onSelectPage,
+}: {
+  title: string;
+  rows: Row[][];
+  tone: Tone;
+  pageIndex: number;
+  onSelectPage: (index: number) => void;
+}) {
+  const safeIndex = rows.length === 0 ? 0 : Math.min(pageIndex, rows.length - 1);
+
   return (
-    <MarketPanel className="overflow-hidden">
-      <div className="border-b border-[#2b2f36] px-4 py-3">
-        <h3 className="text-[14px] font-semibold text-[#d1d4dc]">{title}</h3>
+    <MarketPanel className="overflow-hidden px-4 py-4">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-[13px] font-semibold text-[#d1d4dc]">{title}</h3>
+        <div className="flex items-center gap-1.5">
+          {rows.map((_, index) => (
+            <button
+              key={`${title}-${index}`}
+              type="button"
+              onClick={() => onSelectPage(index)}
+              className={cn(
+                "h-2 w-2 rounded-full transition",
+                safeIndex === index ? "bg-[#3366ff]" : "bg-[rgba(132,142,156,0.28)] hover:bg-[rgba(132,142,156,0.52)]",
+              )}
+            />
+          ))}
+        </div>
       </div>
-      {rows.map((row) => (
-        <Link
-          key={`${title}-${row.name}`}
-          className="grid grid-cols-[44px_minmax(0,1fr)_64px] items-center gap-3 border-b border-[#2b2f36] px-4 py-3 transition hover:bg-[rgba(255,255,255,0.02)] last:border-b-0"
-          href={row.href}
+      {rows.length > 0 ? (
+        <div className="relative mt-3 overflow-hidden">
+          <div
+            className="flex transition-transform duration-500 ease-out"
+            style={{ transform: `translateX(-${safeIndex * 100}%)` }}
+          >
+            {rows.map((page, index) => (
+              <div key={`${title}-page-${index}`} className="grid min-w-full gap-2">
+                {page.map((row) => (
+                  <Link
+                    key={`${title}-${row.name}`}
+                    className="grid grid-cols-[minmax(0,1fr)_72px] items-center gap-3 rounded-[8px] border border-[#2b2f36] bg-[#1f2329] px-3 py-3 transition hover:bg-[rgba(255,255,255,0.02)]"
+                    href={row.href}
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-[12px] font-medium text-[#d1d4dc]">{row.name}</p>
+                      <p className="mt-1 truncate text-[10px] text-[#848e9c]">{row.category}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[12px] text-[#d1d4dc]">{row.score}</p>
+                      <p className={cn("mt-1 text-[10px]", tone === "up" ? "text-[#c84a31]" : "text-[#1261c4]")}>{row.change}</p>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="mt-3 rounded-[8px] border border-[#2b2f36] bg-[#161b24] px-4 py-5 text-[12px] text-[#848e9c]">
+          표시할 종목이 아직 없습니다.
+        </div>
+      )}
+    </MarketPanel>
+  );
+}
+
+function NewsCard({
+  article,
+  locale,
+  text,
+}: {
+  article: NewsArticleApi;
+  locale: MarketLocale;
+  text: CopyText;
+}) {
+  return (
+    <a
+      className="block rounded-[10px] border border-[#2b2f36] bg-[#1f2329] px-4 py-4 transition hover:border-[rgba(51,102,255,0.34)] hover:bg-[rgba(51,102,255,0.04)]"
+      href={article.canonical_url}
+      rel="noreferrer"
+      target="_blank"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="inline-flex h-[18px] items-center rounded-[4px] bg-[rgba(51,102,255,0.1)] px-2 text-[9px] text-[#3366ff]">
+          {article.source_name}
+        </span>
+        <span className="text-[10px] text-[#848e9c]">
+          {text.collectedAt} {formatDateTimeLabel(article.collected_at)}
+        </span>
+        {article.grade ? (
+          <span className="inline-flex h-[18px] items-center rounded-[4px] bg-[rgba(200,74,49,0.1)] px-2 text-[9px] text-[#c84a31]">
+            {article.grade}
+          </span>
+        ) : null}
+      </div>
+      <h3 className="mt-3 text-[14px] font-semibold leading-6 text-[#d1d4dc]">{article.title}</h3>
+      <p className="mt-2 text-[12px] leading-6 text-[#9aa4b2]">{article.summary_ko}</p>
+      <div className="mt-3 rounded-[8px] border border-[rgba(255,255,255,0.05)] bg-[rgba(255,255,255,0.02)] px-3 py-3">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#848e9c]">{text.marketImpact}</p>
+        <p className="mt-2 text-[11px] leading-5 text-[#d1d4dc]">
+          {article.market_impact_ko || (locale === "ko" ? "시장 영향 해석이 아직 없습니다." : "No market interpretation yet.")}
+        </p>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {article.linked_projects.map((project) => (
+          <span
+            key={`${article.id}-${project.slug}`}
+            className="inline-flex h-[20px] items-center rounded-[999px] bg-[rgba(132,142,156,0.1)] px-2.5 text-[10px] text-[#a7b0bd]"
+          >
+            {project.name}
+          </span>
+        ))}
+      </div>
+    </a>
+  );
+}
+
+function NewsCarousel({
+  title,
+  subtitle,
+  pages,
+  pageIndex,
+  onSelectPage,
+  locale,
+  text,
+}: {
+  title: string;
+  subtitle: string;
+  pages: NewsArticleApi[][];
+  pageIndex: number;
+  onSelectPage: (index: number) => void;
+  locale: MarketLocale;
+  text: CopyText;
+}) {
+  const safeIndex = pages.length === 0 ? 0 : Math.min(pageIndex, pages.length - 1);
+
+  return (
+    <MarketPanel className="overflow-hidden px-4 py-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-[14px] font-semibold text-[#d1d4dc]">{title}</h3>
+          <p className="mt-1 text-[11px] text-[#848e9c]">{subtitle}</p>
+        </div>
+        <div className="flex items-center gap-1.5">
+          {pages.length > 1 ? <span className="text-[10px] text-[#848e9c]">{text.rotating}</span> : null}
+          {pages.map((_, index) => (
+            <button
+              key={`${title}-${index}`}
+              type="button"
+              onClick={() => onSelectPage(index)}
+              className={cn(
+                "h-2 w-2 rounded-full transition",
+                safeIndex === index ? "bg-[#3366ff]" : "bg-[rgba(132,142,156,0.28)] hover:bg-[rgba(132,142,156,0.52)]",
+              )}
+            />
+          ))}
+        </div>
+      </div>
+      {pages.length === 0 ? (
+        <div className="mt-4 rounded-[8px] border border-[#2b2f36] bg-[#161b24] px-4 py-6 text-[12px] text-[#848e9c]">
+          {locale === "ko" ? "표시할 뉴스가 아직 없습니다." : "No news is available yet."}
+        </div>
+      ) : null}
+      {pages.length > 0 ? (
+      <div className="relative mt-4 overflow-hidden">
+        <div
+          className="flex transition-transform duration-500 ease-out"
+          style={{ transform: `translateX(-${safeIndex * 100}%)` }}
         >
-          <span className="text-[11px] text-[#848e9c]">{row.rank}</span>
-          <div className="min-w-0">
-            <p className="truncate text-[13px] font-medium text-[#d1d4dc]">{row.name}</p>
-            <p className="mt-1 truncate text-[10px] text-[#848e9c]">{row.category}</p>
-          </div>
-          <div className="text-right">
-            <p className="text-[13px] text-[#d1d4dc]">{row.score}</p>
-            <p className={cn("mt-1 text-[10px]", tone === "up" ? "text-[#c84a31]" : "text-[#1261c4]")}>{row.change}</p>
-          </div>
-        </Link>
-      ))}
+          {pages.map((page, index) => (
+            <div key={`${title}-page-${index}`} className="grid min-w-full gap-3">
+              {page.map((article) => (
+                <NewsCard key={`${title}-${article.id}`} article={article} locale={locale} text={text} />
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+      ) : null}
     </MarketPanel>
   );
 }
@@ -311,6 +535,12 @@ export function FigmaMarketAnalysisPage() {
   const [risingEntries, setRisingEntries] = useState<LeaderboardEntryApi[]>([]);
   const [season, setSeason] = useState<SeasonApi | null>(null);
   const [comparison, setComparison] = useState<CompareItemApi[]>([]);
+  const [headlineNews, setHeadlineNews] = useState<NewsArticleApi[]>([]);
+  const [projectNews, setProjectNews] = useState<NewsArticleApi[]>([]);
+  const [headlineNewsPage, setHeadlineNewsPage] = useState(0);
+  const [projectNewsPage, setProjectNewsPage] = useState(0);
+  const [gainerPage, setGainerPage] = useState(0);
+  const [loserPage, setLoserPage] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reportId, setReportId] = useState("overall");
@@ -324,13 +554,14 @@ export function FigmaMarketAnalysisPage() {
       setError(null);
 
       try {
-        const [quoteRows, globalBoard, cncfBoard, risingBoard, currentSeason, compareData] = await Promise.all([
+        const [quoteRows, globalBoard, cncfBoard, risingBoard, currentSeason, compareData, newsFeed] = await Promise.all([
           api.trading.quotes(12),
           api.leaderboards.global({ page_size: "8" }),
           api.leaderboards.cncf({ page_size: "8" }),
           api.leaderboards.rising({ page_size: "6" }),
           api.seasons.current(),
           api.compare(["kubernetes", "prometheus", "argo-cd"]),
+          api.news.analysisFeed(6),
         ]);
 
         if (cancelled) {
@@ -343,6 +574,8 @@ export function FigmaMarketAnalysisPage() {
         setRisingEntries(Array.isArray(risingBoard?.entries) ? (risingBoard.entries as LeaderboardEntryApi[]) : []);
         setSeason((currentSeason as SeasonApi) ?? null);
         setComparison(Array.isArray(compareData?.items) ? (compareData.items as CompareItemApi[]) : []);
+        setHeadlineNews(Array.isArray(newsFeed?.headlines) ? (newsFeed.headlines as NewsArticleApi[]) : []);
+        setProjectNews(Array.isArray(newsFeed?.project_focus) ? (newsFeed.project_focus as NewsArticleApi[]) : []);
       } catch (loadError) {
         if (cancelled) {
           return;
@@ -362,6 +595,31 @@ export function FigmaMarketAnalysisPage() {
     };
   }, []);
 
+  const headlinePages = useMemo(() => chunkItems(headlineNews, 3), [headlineNews]);
+  const projectPages = useMemo(() => chunkItems(projectNews, 3), [projectNews]);
+
+  useEffect(() => {
+    if (headlinePages.length <= 1) {
+      setHeadlineNewsPage(0);
+      return;
+    }
+    const timer = window.setInterval(() => {
+      setHeadlineNewsPage((current) => (current + 1) % headlinePages.length);
+    }, 6000);
+    return () => window.clearInterval(timer);
+  }, [headlinePages.length]);
+
+  useEffect(() => {
+    if (projectPages.length <= 1) {
+      setProjectNewsPage(0);
+      return;
+    }
+    const timer = window.setInterval(() => {
+      setProjectNewsPage((current) => (current + 1) % projectPages.length);
+    }, 7000);
+    return () => window.clearInterval(timer);
+  }, [projectPages.length]);
+
   const positiveCount = quotes.filter((quote) => quote.change_rate > 0).length;
   const negativeCount = quotes.filter((quote) => quote.change_rate < 0).length;
   const averageChange = average(quotes.map((quote) => quote.change_rate));
@@ -371,8 +629,32 @@ export function FigmaMarketAnalysisPage() {
   );
   const topGainers = sortedByChange.slice(0, 5).map(toMovementRow);
   const topLosers = [...sortedByChange].reverse().slice(0, 5).map(toMovementRow);
+  const gainerPages = useMemo(() => chunkItems(topGainers, 3), [topGainers]);
+  const loserPages = useMemo(() => chunkItems(topLosers, 3), [topLosers]);
   const strongestQuote = sortedByChange[0];
   const weakestQuote = [...sortedByChange].reverse()[0];
+
+  useEffect(() => {
+    if (gainerPages.length <= 1) {
+      setGainerPage(0);
+      return;
+    }
+    const timer = window.setInterval(() => {
+      setGainerPage((current) => (current + 1) % gainerPages.length);
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [gainerPages.length]);
+
+  useEffect(() => {
+    if (loserPages.length <= 1) {
+      setLoserPage(0);
+      return;
+    }
+    const timer = window.setInterval(() => {
+      setLoserPage((current) => (current + 1) % loserPages.length);
+    }, 5500);
+    return () => window.clearInterval(timer);
+  }, [loserPages.length]);
 
   const categoryLeaders = useMemo(() => {
     const groups = new Map<string, TradingQuoteApi[]>();
@@ -823,10 +1105,32 @@ export function FigmaMarketAnalysisPage() {
   }, [globalEntries, latestDate, locale, marketTone, risingEntries, season, strongestCategory, weakestCategory]);
 
   const summary = [
-    { label: { ko: text.analyses, en: text.analyses }, value: { ko: `${reports.length}건`, en: `${reports.length}` }, tone: "neutral" as Tone },
-    { label: { ko: text.gainers, en: text.gainers }, value: { ko: `${positiveCount}개`, en: `${positiveCount}` }, tone: "up" as Tone },
-    { label: { ko: text.losers, en: text.losers }, value: { ko: `${negativeCount}개`, en: `${negativeCount}` }, tone: "down" as Tone },
-    { label: { ko: text.watchItems, en: text.watchItems }, value: { ko: `${events.length}개`, en: `${events.length}` }, tone: "neutral" as Tone },
+    {
+      label: { ko: "시장 평균", en: "Avg move" },
+      value: { ko: formatPercent(averageChange), en: formatPercent(averageChange) },
+      tone: marketTone,
+    },
+    {
+      label: { ko: "상승 / 하락", en: "Adv / Dec" },
+      value: { ko: `${positiveCount} / ${negativeCount}`, en: `${positiveCount} / ${negativeCount}` },
+      tone: positiveCount >= negativeCount ? ("up" as Tone) : ("down" as Tone),
+    },
+    {
+      label: { ko: "주도 카테고리", en: "Lead sector" },
+      value: {
+        ko: strongestCategory?.category ?? "-",
+        en: strongestCategory?.category ?? "-",
+      },
+      tone: strongestCategory ? toneFromChange(strongestCategory.averageChange) : ("neutral" as Tone),
+    },
+    {
+      label: { ko: "대표 모멘텀", en: "Top momentum" },
+      value: {
+        ko: strongestQuote?.name ?? "-",
+        en: strongestQuote?.name ?? "-",
+      },
+      tone: strongestQuote ? toneFromChange(strongestQuote.change_rate) : ("neutral" as Tone),
+    },
   ];
 
   const report = reports.find((item) => item.id === reportId) ?? reports[0];
@@ -856,6 +1160,22 @@ export function FigmaMarketAnalysisPage() {
               </MarketPanel>
             ))}
           </div>
+          <div className="grid gap-3 xl:grid-cols-2">
+            <MoverCarousel
+              title={text.gainersTitle}
+              rows={gainerPages}
+              tone="up"
+              pageIndex={gainerPage}
+              onSelectPage={setGainerPage}
+            />
+            <MoverCarousel
+              title={text.losersTitle}
+              rows={loserPages}
+              tone="down"
+              pageIndex={loserPage}
+              onSelectPage={setLoserPage}
+            />
+          </div>
           {loading ? <p className="text-[11px] text-[#848e9c]">{text.loading}</p> : null}
           {error ? (
             <div className="rounded-[4px] border border-[rgba(200,74,49,0.24)] bg-[rgba(200,74,49,0.08)] px-3 py-2 text-[11px] leading-4 text-[#f1b6aa]">
@@ -866,64 +1186,78 @@ export function FigmaMarketAnalysisPage() {
       </section>
 
       <section className="space-y-3">
-        <SectionHeading title={text.briefingTitle} />
-        <MarketPanel className="px-5 py-5">
-          <p className="text-[12px] text-[#848e9c]">{formatDateLabel(latestDate)}</p>
-          <h2 className="mt-1 text-[18px] font-semibold text-[#d1d4dc]">
-            {locale === "ko" ? "일일 시장 브리핑" : "Daily market briefing"}
-          </h2>
-          <p className="mt-4 text-[14px] leading-[22px] text-[#d1d4dc]">
-            {locale === "ko"
-              ? `시장 평균 변동률은 ${formatPercent(averageChange)}입니다. ${strongestCategory?.category ?? "주도 카테고리"}가 상대 강세를 보이고, ${strongestQuote?.name ?? "대표 종목"} 움직임이 오늘 테이프를 주도하고 있습니다.`
-              : `Average market move is ${formatPercent(averageChange)}. ${strongestCategory?.category ?? "The leading category"} is showing relative strength, while ${strongestQuote?.name ?? "the top mover"} is setting today's tone.`}
-          </p>
-          <div className="mt-4">
-            <p className="text-[12px] font-semibold text-[#848e9c]">{text.keyPoints}</p>
-            <ul className="mt-2 space-y-2">
-              {briefingPoints.map((point) => (
-                <li key={point} className="flex items-start gap-2 text-[12px] text-[#848e9c]">
-                  <span className="text-[#3366ff]">•</span>
-                  <span>{point}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </MarketPanel>
+        <SectionHeading title={text.newsTitle} />
+        <p className="text-[11px] text-[#848e9c]">{text.newsDesc}</p>
+        <div className="grid gap-4 xl:grid-cols-2">
+          <NewsCarousel
+            title={text.headlineNews}
+            subtitle={locale === "ko" ? "전체 시장에서 중요도가 높은 기사 3개씩 순환합니다." : "Rotates through three high-signal market headlines at a time."}
+            pages={headlinePages}
+            pageIndex={headlineNewsPage}
+            onSelectPage={setHeadlineNewsPage}
+            locale={locale}
+            text={text}
+          />
+          <NewsCarousel
+            title={text.projectNews}
+            subtitle={locale === "ko" ? "실제 종목과 연결된 기사 3개씩 순환합니다." : "Rotates through three project-linked stories at a time."}
+            pages={projectPages}
+            pageIndex={projectNewsPage}
+            onSelectPage={setProjectNewsPage}
+            locale={locale}
+            text={text}
+          />
+        </div>
       </section>
 
       <section className="space-y-3">
-        <SectionHeading title={text.insightsTitle} />
-        <div className="grid gap-3 xl:grid-cols-2">
-          {insights.map((item) => (
-            <MarketPanel key={item.title.ko} className="px-4 py-4">
-              <div className="flex items-start justify-between gap-3">
-                <h3 className="text-[14px] font-semibold text-[#d1d4dc]">{item.title[locale]}</h3>
-                <TonePill
-                  label={item.tone === "up" ? text.bullish : item.tone === "down" ? text.bearish : text.neutral}
-                  tone={item.tone}
-                />
-              </div>
-              <p className="mt-3 text-[11px] leading-[18px] text-[#848e9c]">{item.body[locale]}</p>
-              <div className="mt-4 flex flex-wrap gap-2">
-                {item.tags.map((tag) => (
-                  <span key={`${item.title.ko}-${tag}`} className="inline-flex h-[18px] items-center rounded-[4px] bg-[rgba(132,142,156,0.1)] px-2 text-[9px] text-[#848e9c]">
-                    {tag}
-                  </span>
+        <SectionHeading title={text.marketStructure} />
+        <p className="text-[11px] text-[#848e9c]">{text.marketStructureDesc}</p>
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+          <MarketPanel className="px-5 py-5">
+            <p className="text-[12px] text-[#848e9c]">{formatDateLabel(latestDate)}</p>
+            <h2 className="mt-1 text-[18px] font-semibold text-[#d1d4dc]">
+              {locale === "ko" ? "일일 시장 브리핑" : "Daily market briefing"}
+            </h2>
+            <p className="mt-4 text-[14px] leading-[22px] text-[#d1d4dc]">
+              {locale === "ko"
+                ? `시장 평균 변동률은 ${formatPercent(averageChange)}입니다. ${strongestCategory?.category ?? "주도 카테고리"}가 상대 강세를 보이고, ${strongestQuote?.name ?? "대표 종목"} 움직임이 오늘 흐름을 주도하고 있습니다.`
+                : `Average market move is ${formatPercent(averageChange)}. ${strongestCategory?.category ?? "The leading category"} is showing relative strength, while ${strongestQuote?.name ?? "the top mover"} is defining the tape.`}
+            </p>
+            <div className="mt-4">
+              <p className="text-[12px] font-semibold text-[#848e9c]">{text.keyPoints}</p>
+              <ul className="mt-2 space-y-2">
+                {briefingPoints.map((point) => (
+                  <li key={point} className="flex items-start gap-2 text-[12px] text-[#848e9c]">
+                    <span className="text-[#3366ff]">•</span>
+                    <span>{point}</span>
+                  </li>
                 ))}
-              </div>
-            </MarketPanel>
-          ))}
-        </div>
-      </section>
+              </ul>
+            </div>
+          </MarketPanel>
 
-      <section className="grid gap-4 xl:grid-cols-2">
-        <div className="space-y-3">
-          <SectionHeading title={text.gainersTitle} />
-          <MovementTable rows={topGainers} title={text.gainersTitle} tone="up" />
-        </div>
-        <div className="space-y-3">
-          <SectionHeading title={text.losersTitle} />
-          <MovementTable rows={topLosers} title={text.losersTitle} tone="down" />
+          <div className="grid gap-3">
+            {insights.slice(0, 3).map((item) => (
+              <MarketPanel key={item.title.ko} className="px-4 py-4">
+                <div className="flex items-start justify-between gap-3">
+                  <h3 className="text-[14px] font-semibold text-[#d1d4dc]">{item.title[locale]}</h3>
+                  <TonePill
+                    label={item.tone === "up" ? text.bullish : item.tone === "down" ? text.bearish : text.neutral}
+                    tone={item.tone}
+                  />
+                </div>
+                <p className="mt-3 text-[11px] leading-[18px] text-[#848e9c]">{item.body[locale]}</p>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {item.tags.map((tag) => (
+                    <span key={`${item.title.ko}-${tag}`} className="inline-flex h-[18px] items-center rounded-[4px] bg-[rgba(132,142,156,0.1)] px-2 text-[9px] text-[#848e9c]">
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              </MarketPanel>
+            ))}
+          </div>
         </div>
       </section>
 

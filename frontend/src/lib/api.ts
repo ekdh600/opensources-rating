@@ -270,6 +270,11 @@ export const api = {
     qs.set("projects", projects.join(","));
     return fetchCompareAPI<any>(`/api/v1/compare?${qs.toString()}`);
   },
+  news: {
+    headlines: (limit = 8) => fetchAPI<any>(`/api/v1/news/headlines?limit=${limit}`),
+    project: (slug: string, limit = 8) => fetchAPI<any>(`/api/v1/news/projects/${slug}?limit=${limit}`),
+    analysisFeed: (limit = 6) => fetchAPI<any>(`/api/v1/news/analysis-feed?limit=${limit}`),
+  },
   search: (q: string) => fetchAPI<any>(`/api/v1/search?q=${encodeURIComponent(q)}`),
   scoring: {
     explain: (slug: string) => fetchAPI<any>(`/api/v1/scoring/explain/${slug}`),

@@ -11,6 +11,7 @@ from app.models.season import Season
 from app.models.prediction import Prediction, PredictionProduct
 from app.models.badge import Badge, UserBadge, SeasonResult
 from app.models.trading import CommentRecommendation, ProjectComment, TradeOrder, UserPosition
+from app.models.news import NewsSource, NewsArticle, NewsArticleProject
 
 __all__ = [
     "Project",
@@ -34,4 +35,7 @@ __all__ = [
     "Badge",
     "UserBadge",
     "SeasonResult",
+    "NewsSource",
+    "NewsArticle",
+    "NewsArticleProject",
 ]
