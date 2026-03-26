@@ -32,6 +32,10 @@ class VerifyEmailConfirm(BaseModel):
     token: str
 
 
+class TokenOnlyRequest(BaseModel):
+    token: str
+
+
 class ForgotIdRequest(BaseModel):
     email: str
 

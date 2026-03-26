@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useLocale } from "next-intl";
@@ -21,6 +21,7 @@ import {
   MARKET_HOME_STOCKS as MARKET_STOCK_DATA,
   MARKET_INDEX_CARDS as MARKET_INDEX_DATA,
 } from "@/lib/market-data";
+import { api } from "@/lib/api";
 
 type MarketLocale = "ko" | "en";
 type Localized = Record<MarketLocale, string>;
@@ -96,12 +97,59 @@ interface StockCardData {
   delta: string;
   change: string;
   tone: TrendTone;
-  participants: string;
-  up: number;
-  flat: number;
-  down: number;
+  trust: string;
+  attention: number;
+  execution: number;
+  health: number;
   spark: number[];
   href?: string;
+}
+
+interface TradingQuoteApi {
+  project_id: number;
+  slug: string;
+  name: string;
+  category: string | null;
+  current_price: number;
+  previous_close: number;
+  change_points: number;
+  change_rate: number;
+  rank_global: number | null;
+  score_date: string;
+}
+
+interface LeaderboardProjectApi {
+  slug: string;
+  display_name_ko: string | null;
+  display_name_en: string | null;
+  foundation_type: string | null;
+  category?: {
+    slug: string;
+    name_ko: string;
+    name_en: string;
+  } | null;
+}
+
+interface LeaderboardEntryApi {
+  rank: number;
+  total_score: number;
+  attention_score: number;
+  execution_score: number;
+  health_score: number;
+  trust_score: number;
+  project: LeaderboardProjectApi;
+}
+
+interface SeasonApi {
+  name: string;
+  start_date: string;
+  end_date: string;
+}
+
+interface CategoryApi {
+  slug: string;
+  name_ko: string;
+  name_en: string;
 }
 
 const COPY = {
@@ -116,15 +164,36 @@ const COPY = {
     heatmapDescription: "붉은색은 강세, 파란색은 약세",
     stocksTitle: "주요 종목",
     stocksAction: "전체 보기 ->",
-    distribution: "포지션 분포",
-    participantsSuffix: "참여",
-    rise: "상승",
-    flat: "보합",
-    fall: "하락",
+    distribution: "점수 구성",
+    trustLabel: "신뢰",
+    attentionLabel: "주목",
+    executionLabel: "실행",
+    healthLabel: "건전",
     timeframes: ["1시간", "4시간", "1일", "1주", "1개월"],
     fullscreenOpen: "차트 전체화면",
     fullscreenClose: "전체화면 닫기",
     hoverPrefix: "지수",
+    loading: "시장 데이터를 불러오는 중입니다.",
+    errorPrefix: "시장 데이터 반영 중 문제가 발생했습니다.",
+    methodologyTitle: "데이터 출처와 계산 방식",
+    methodologyBody:
+      "현재 화면의 시장 지수와 종목 가격은 백엔드 API 응답을 기반으로 계산한 OSS 게임 지표입니다. 실거래 가격이 아니라 프로젝트 점수 기반 지수입니다.",
+    methodologyBullet1:
+      "종목 현재가: /api/v1/trading/quotes 의 current_price이며, 각 프로젝트의 최신 total_score를 가격처럼 표시합니다.",
+    methodologyBullet2:
+      "종목 변동률: 최신 total_score와 직전 total_score를 비교한 change_rate입니다.",
+    methodologyBullet3:
+      "OSS Index / CNCF Index / 카테고리 Index: 해당 묶음의 점수 평균과 변동률 평균을 프런트에서 다시 계산한 합성 지수입니다.",
+    methodologyBullet4:
+      "프로젝트 total_score 계산식: 0.34*관심도 + 0.38*실행력 + 0.18*건강도 + 0.10*신뢰도",
+    methodologyBullet5:
+      "현재 데이터 원천: 실수집 운영 데이터가 아니라 개발용 시드 데이터 기반 API 응답입니다.",
+    regimeBullTitle: "시장 현황: 상승장",
+    regimeBullDescription: "실시간 지표 기준으로 주요 OSS 종목이 전반적으로 강세입니다.",
+    regimeBearTitle: "시장 현황: 조정장",
+    regimeBearDescription: "실시간 지표 기준으로 주요 OSS 종목이 전반적으로 약세입니다.",
+    regimeNeutralTitle: "시장 현황: 관망장",
+    regimeNeutralDescription: "실시간 지표 기준으로 주요 OSS 종목이 뚜렷한 방향성 없이 움직이고 있습니다.",
   },
   en: {
     pageTitle: "OSS Market",
@@ -137,15 +206,36 @@ const COPY = {
     heatmapDescription: "Red indicates strength, blue indicates weakness",
     stocksTitle: "Core stocks",
     stocksAction: "View all ->",
-    distribution: "Position split",
-    participantsSuffix: "participants",
-    rise: "Up",
-    flat: "Flat",
-    fall: "Down",
+    distribution: "Score mix",
+    trustLabel: "Trust",
+    attentionLabel: "Attention",
+    executionLabel: "Execution",
+    healthLabel: "Health",
     timeframes: ["1h", "4h", "1d", "1w", "1mo"],
     fullscreenOpen: "Expand chart",
     fullscreenClose: "Close fullscreen",
     hoverPrefix: "Index",
+    loading: "Loading live market data.",
+    errorPrefix: "There was a problem loading live market data.",
+    methodologyTitle: "Data Source and Methodology",
+    methodologyBody:
+      "The market indices and instrument prices on this screen are API-backed OSS game metrics. They are score-based synthetic values, not real tradable market prices.",
+    methodologyBullet1:
+      "Instrument price: current_price from /api/v1/trading/quotes, displayed from the latest project total_score.",
+    methodologyBullet2:
+      "Instrument change: change_rate calculated from the latest total_score versus the previous total_score.",
+    methodologyBullet3:
+      "OSS Index / CNCF Index / category indices: composite frontend indices rebuilt from grouped average scores and average changes.",
+    methodologyBullet4:
+      "Project total_score formula: 0.34*attention + 0.38*execution + 0.18*health + 0.10*trust",
+    methodologyBullet5:
+      "Current source data: API responses backed by development seed data, not production live collection.",
+    regimeBullTitle: "Market regime: Bullish",
+    regimeBullDescription: "Live signals show broad strength across major OSS instruments.",
+    regimeBearTitle: "Market regime: Corrective",
+    regimeBearDescription: "Live signals show broad weakness across major OSS instruments.",
+    regimeNeutralTitle: "Market regime: Sideways",
+    regimeNeutralDescription: "Live signals show mixed movement without a strong directional trend.",
   },
 } as const;
 
@@ -238,6 +328,325 @@ const INDEX_CARDS: IndexCardData[] = [
     spark: [46, 48, 47, 50, 53, 54, 57, 60],
   },
 ];
+
+function formatDecimal(value: number, decimals = 2) {
+  return new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  }).format(value);
+}
+
+function formatInteger(value: number) {
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
+function formatDayCount(days: number, locale: MarketLocale) {
+  return locale === "ko" ? `${days}일` : `${days} days`;
+}
+
+function buildLocalizedValue(value: string): Localized {
+  return { ko: value, en: value };
+}
+
+function getToneFromNumber(value: number): TrendTone {
+  if (value > 0.001) {
+    return "up";
+  }
+  if (value < -0.001) {
+    return "down";
+  }
+  return "neutral";
+}
+
+function formatArrowDelta(value: number, decimals = 2) {
+  if (Math.abs(value) < 0.001) {
+    return `• ${formatDecimal(0, decimals)}`;
+  }
+  return `${value >= 0 ? "▲" : "▼"} ${formatDecimal(Math.abs(value), decimals)}`;
+}
+
+function formatSignedPercentValue(value: number, decimals = 2) {
+  if (Math.abs(value) < 0.001) {
+    return "0.00%";
+  }
+  return `${value > 0 ? "+" : "-"}${formatDecimal(Math.abs(value), decimals)}%`;
+}
+
+function buildSparkline(baseValue: number, changeRate: number, points = 8) {
+  const safeBase = Number.isFinite(baseValue) ? baseValue : 50;
+  const drift = safeBase * (changeRate / 100);
+  const values = Array.from({ length: points }, (_, index) => {
+    const progress = points === 1 ? 1 : index / (points - 1);
+    const wobble = Math.sin((index + 1) * 1.25) * Math.max(safeBase * 0.018, 1.4);
+    return Number((safeBase - drift / 2 + drift * progress + wobble).toFixed(3));
+  });
+  const min = Math.min(...values);
+  const offset = min <= 0 ? Math.abs(min) + 8 : 0;
+  return values.map((value) => Math.round(value + offset));
+}
+
+function average(values: number[]) {
+  if (values.length === 0) {
+    return 0;
+  }
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function daysUntil(endDate: string) {
+  const today = new Date();
+  const end = new Date(endDate);
+  const diff = end.getTime() - today.getTime();
+  return Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)));
+}
+
+function normalizeBreakdown(values: number[]) {
+  const safe = values.map((value) => Math.max(0, Math.round(value)));
+  const total = safe.reduce((sum, value) => sum + value, 0);
+  if (total <= 0) {
+    return [34, 33, 33];
+  }
+
+  const scaled = safe.map((value) => Math.round((value / total) * 100));
+  const delta = 100 - scaled.reduce((sum, value) => sum + value, 0);
+  scaled[0] = scaled[0] + delta;
+  return scaled;
+}
+
+function categoryLabel(category: CategoryApi | undefined, locale: MarketLocale) {
+  if (!category) {
+    return locale === "ko" ? "기타" : "Other";
+  }
+  return locale === "ko" ? category.name_ko : category.name_en;
+}
+
+function buildSummaryCardsFromApi({
+  locale,
+  season,
+  quotes,
+  categories,
+}: {
+  locale: MarketLocale;
+  season: SeasonApi | null;
+  quotes: TradingQuoteApi[];
+  categories: CategoryApi[];
+}) {
+  if (!season) {
+    return SUMMARY_CARDS;
+  }
+
+  return [
+    {
+      key: "season",
+      label: { ko: "현재 시즌", en: "Current season" },
+      value: buildLocalizedValue(season.name),
+      tone: "blue" as const,
+    },
+    {
+      key: "days",
+      label: { ko: "남은 일수", en: "Days left" },
+      value: buildLocalizedValue(formatDayCount(daysUntil(season.end_date), locale)),
+      tone: "emerald" as const,
+    },
+    {
+      key: "projects",
+      label: { ko: "활성 종목", en: "Active listings" },
+      value: buildLocalizedValue(formatInteger(quotes.length)),
+      tone: "red" as const,
+    },
+    {
+      key: "categories",
+      label: { ko: "추적 카테고리", en: "Tracked categories" },
+      value: buildLocalizedValue(formatInteger(categories.length)),
+      tone: "gray" as const,
+    },
+  ];
+}
+
+function buildIndexCardsFromApi({
+  locale,
+  quotes,
+  globalEntries,
+  cncfEntries,
+  categories,
+}: {
+  locale: MarketLocale;
+  quotes: TradingQuoteApi[];
+  globalEntries: LeaderboardEntryApi[];
+  cncfEntries: LeaderboardEntryApi[];
+  categories: CategoryApi[];
+}) {
+  if (quotes.length === 0 || globalEntries.length === 0) {
+    return MARKET_INDEX_DATA;
+  }
+
+  const categoryByName = new Map(
+    categories.flatMap((category) => [
+      [category.name_ko, category],
+      [category.name_en, category],
+    ]),
+  );
+
+  const buildCard = ({
+    key,
+    eyebrow,
+    label,
+    scoreValues,
+    changeValues,
+  }: {
+    key: string;
+    eyebrow: Localized;
+    label: string;
+    scoreValues: number[];
+    changeValues: number[];
+  }): IndexCardData => {
+    const avgScore = average(scoreValues);
+    const avgChangeRate = average(changeValues);
+    const deltaPoints = avgScore * (avgChangeRate / 100);
+    return {
+      key,
+      eyebrow,
+      label,
+      value: formatDecimal(avgScore),
+      delta: formatArrowDelta(deltaPoints),
+      change: formatSignedPercentValue(avgChangeRate),
+      tone: getToneFromNumber(avgChangeRate),
+      spark: buildSparkline(avgScore, avgChangeRate),
+    };
+  };
+
+  const cards: IndexCardData[] = [
+    buildCard({
+      key: "oss",
+      eyebrow: { ko: "실시간 전체 OSS 시장 지수", en: "Live overall OSS market index" },
+      label: "OSS Index",
+      scoreValues: globalEntries.map((entry) => entry.total_score),
+      changeValues: quotes.map((quote) => quote.change_rate),
+    }),
+    buildCard({
+      key: "cncf",
+      eyebrow: { ko: "실시간 CNCF 프로젝트 지수", en: "Live CNCF project index" },
+      label: "CNCF Index",
+      scoreValues: cncfEntries.map((entry) => entry.total_score),
+      changeValues: quotes
+        .filter((quote) => cncfEntries.some((entry) => entry.project.slug === quote.slug))
+        .map((quote) => quote.change_rate),
+    }),
+  ];
+
+  const groupedQuotes = new Map<string, TradingQuoteApi[]>();
+  quotes.forEach((quote) => {
+    const key = quote.category ?? "other";
+    groupedQuotes.set(key, [...(groupedQuotes.get(key) ?? []), quote]);
+  });
+
+  const categoryCards = [...groupedQuotes.entries()]
+    .sort((left, right) => right[1].length - left[1].length)
+    .slice(0, 6)
+    .map(([name, rows]) => {
+      const category = categoryByName.get(name);
+      const labelBase = categoryLabel(category, locale);
+      return buildCard({
+        key: category?.slug ?? name.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+        eyebrow: {
+          ko: `${labelBase} 카테고리 지수`,
+          en: `${labelBase} category index`,
+        },
+        label: `${labelBase} Index`,
+        scoreValues: rows.map((quote) => quote.current_price),
+        changeValues: rows.map((quote) => quote.change_rate),
+      });
+    });
+
+  return [...cards, ...categoryCards];
+}
+
+function buildHeatmapFromApi(quotes: TradingQuoteApi[]) {
+  if (quotes.length === 0) {
+    return MARKET_HEATMAP_DATA;
+  }
+
+  return [...quotes]
+    .sort((left, right) => {
+      const gap = Math.abs(right.change_rate) - Math.abs(left.change_rate);
+      if (Math.abs(gap) > 0.001) {
+        return gap;
+      }
+      return (left.rank_global ?? Number.MAX_SAFE_INTEGER) - (right.rank_global ?? Number.MAX_SAFE_INTEGER);
+    })
+    .slice(0, 12)
+    .map((quote, index) => ({
+      name: quote.name,
+      change: formatSignedPercentValue(quote.change_rate),
+      tone: getToneFromNumber(quote.change_rate),
+      desktopCol: ((index % 6) + 1) as 1 | 2 | 3 | 4 | 5 | 6,
+      desktopRow: (index < 6 ? 1 : 2) as 1 | 2,
+    }));
+}
+
+function buildFallbackStockCards(): StockCardData[] {
+  return MARKET_STOCK_DATA.map((stock) => ({
+    key: stock.key,
+    name: stock.name,
+    category: stock.category,
+    rank: stock.rank,
+    score: stock.score,
+    delta: stock.delta,
+    change: stock.change,
+    tone: stock.tone,
+    trust: "80.0",
+    attention: stock.up,
+    execution: stock.flat,
+    health: stock.down,
+    spark: stock.spark,
+    href: stock.href,
+  }));
+}
+
+function buildStockCardsFromApi({
+  locale,
+  quotes,
+  entries,
+}: {
+  locale: MarketLocale;
+  quotes: TradingQuoteApi[];
+  entries: LeaderboardEntryApi[];
+}) {
+  if (quotes.length === 0 || entries.length === 0) {
+    return buildFallbackStockCards();
+  }
+
+  const entryBySlug = new Map(entries.map((entry) => [entry.project.slug, entry]));
+
+  return quotes.slice(0, 12).map((quote) => {
+    const entry = entryBySlug.get(quote.slug);
+    const breakdown = normalizeBreakdown([
+      entry?.attention_score ?? 34,
+      entry?.execution_score ?? 33,
+      entry?.health_score ?? 33,
+    ]);
+    return {
+      key: quote.slug,
+      name:
+        locale === "ko"
+          ? entry?.project.display_name_ko || entry?.project.display_name_en || quote.name
+          : entry?.project.display_name_en || entry?.project.display_name_ko || quote.name,
+      category: quote.category ?? (locale === "ko" ? "기타" : "Other"),
+      rank: quote.rank_global ?? 0,
+      score: formatDecimal(quote.current_price),
+      delta: formatArrowDelta(quote.change_points),
+      change: formatSignedPercentValue(quote.change_rate),
+      tone: getToneFromNumber(quote.change_rate),
+      trust: formatDecimal(entry?.trust_score ?? 0),
+      attention: breakdown[0] ?? 34,
+      execution: breakdown[1] ?? 33,
+      health: breakdown[2] ?? 33,
+      spark: buildSparkline(quote.current_price, quote.change_rate),
+      href: `/market/trading/${quote.slug}`,
+    };
+  });
+}
 
 const CHART_DATA: Record<TimeframeKey, ChartDataset> = {
   "1h": {
@@ -880,10 +1289,10 @@ const STOCK_CARDS: StockCardData[] = [
     delta: "▲ 2.1",
     change: "+2.29%",
     tone: "up",
-    participants: "1,000",
-    up: 57,
-    flat: 29,
-    down: 14,
+    trust: "83.8",
+    attention: 57,
+    execution: 29,
+    health: 14,
     spark: [82, 83, 83, 84, 85, 86, 88, 89],
     href: "/market/trading/kubernetes",
   },
@@ -896,10 +1305,10 @@ const STOCK_CARDS: StockCardData[] = [
     delta: "▲ 1.3",
     change: "+1.50%",
     tone: "up",
-    participants: "1,260",
-    up: 47,
-    flat: 43,
-    down: 10,
+    trust: "84.1",
+    attention: 47,
+    execution: 43,
+    health: 10,
     spark: [78, 79, 80, 80, 81, 82, 83, 84],
     href: "/market/trading/prometheus",
   },
@@ -912,10 +1321,10 @@ const STOCK_CARDS: StockCardData[] = [
     delta: "▼ 0.8",
     change: "-0.95%",
     tone: "down",
-    participants: "932",
-    up: 42,
-    flat: 33,
-    down: 25,
+    trust: "76.4",
+    attention: 42,
+    execution: 33,
+    health: 25,
     spark: [79, 78, 77, 76, 75, 74, 73, 72],
     href: "/market/trading/cilium",
   },
@@ -928,10 +1337,10 @@ const STOCK_CARDS: StockCardData[] = [
     delta: "▲ 2.4",
     change: "+4.20%",
     tone: "up",
-    participants: "952",
-    up: 71,
-    flat: 21,
-    down: 8,
+    trust: "81.0",
+    attention: 71,
+    execution: 21,
+    health: 8,
     spark: [68, 70, 72, 74, 75, 77, 78, 80],
     href: "/market/trading/argo-cd",
   },
@@ -944,10 +1353,10 @@ const STOCK_CARDS: StockCardData[] = [
     delta: "▲ 1.5",
     change: "+1.77%",
     tone: "up",
-    participants: "1,444",
-    up: 72,
-    flat: 22,
-    down: 7,
+    trust: "85.7",
+    attention: 72,
+    execution: 22,
+    health: 7,
     spark: [78, 79, 80, 80, 81, 82, 83, 84],
     href: "/market/trading/grafana",
   },
@@ -960,10 +1369,10 @@ const STOCK_CARDS: StockCardData[] = [
     delta: "▼ 1.2",
     change: "-1.57%",
     tone: "down",
-    participants: "980",
-    up: 35,
-    flat: 42,
-    down: 23,
+    trust: "72.9",
+    attention: 35,
+    execution: 42,
+    health: 23,
     spark: [74, 73, 72, 71, 70, 69, 68, 67],
     href: "/market/trading/istio",
   },
@@ -976,10 +1385,10 @@ const STOCK_CARDS: StockCardData[] = [
     delta: "▲ 0.8",
     change: "+0.96%",
     tone: "up",
-    participants: "1,000",
-    up: 57,
-    flat: 29,
-    down: 14,
+    trust: "80.5",
+    attention: 57,
+    execution: 29,
+    health: 14,
     spark: [80, 81, 82, 81, 83, 84, 84, 85],
     href: "/market/trading/envoy",
   },
@@ -992,10 +1401,10 @@ const STOCK_CARDS: StockCardData[] = [
     delta: "▼ 0.3",
     change: "-0.38%",
     tone: "down",
-    participants: "966",
-    up: 44,
-    flat: 37,
-    down: 19,
+    trust: "77.1",
+    attention: 44,
+    execution: 37,
+    health: 19,
     spark: [76, 75, 74, 74, 73, 72, 71, 70],
     href: "/market/trading/containerd",
   },
@@ -1008,10 +1417,10 @@ const STOCK_CARDS: StockCardData[] = [
     delta: "▲ 0.9",
     change: "+1.13%",
     tone: "up",
-    participants: "1,148",
-    up: 54,
-    flat: 30,
-    down: 16,
+    trust: "79.8",
+    attention: 54,
+    execution: 30,
+    health: 16,
     spark: [74, 75, 76, 77, 77, 78, 79, 80],
     href: "/market/trading/docker",
   },
@@ -1024,10 +1433,10 @@ const STOCK_CARDS: StockCardData[] = [
     delta: "▼ 0.4",
     change: "-0.51%",
     tone: "down",
-    participants: "688",
-    up: 39,
-    flat: 37,
-    down: 24,
+    trust: "71.3",
+    attention: 39,
+    execution: 37,
+    health: 24,
     spark: [72, 72, 71, 70, 69, 68, 68, 67],
     href: "/market/trading/etcd",
   },
@@ -1040,10 +1449,10 @@ const STOCK_CARDS: StockCardData[] = [
     delta: "▲ 1.1",
     change: "+1.41%",
     tone: "up",
-    participants: "1,192",
-    up: 63,
-    flat: 24,
-    down: 13,
+    trust: "82.4",
+    attention: 63,
+    execution: 24,
+    health: 13,
     spark: [70, 71, 72, 73, 74, 76, 77, 79],
     href: "/market/trading/terraform",
   },
@@ -1217,19 +1626,48 @@ function IndexCard({
   );
 }
 
-function RegimeBar({ locale }: { locale: MarketLocale }) {
+function RegimeBar({
+  locale,
+  averageChangeRate,
+}: {
+  locale: MarketLocale;
+  averageChangeRate: number;
+}) {
   const text = COPY[locale];
+  const tone = averageChangeRate > 0.25 ? "up" : averageChangeRate < -0.25 ? "down" : "neutral";
+  const title =
+    tone === "up"
+      ? text.regimeBullTitle
+      : tone === "down"
+        ? text.regimeBearTitle
+        : text.regimeNeutralTitle;
+  const description =
+    tone === "up"
+      ? text.regimeBullDescription
+      : tone === "down"
+        ? text.regimeBearDescription
+        : text.regimeNeutralDescription;
+  const classes =
+    tone === "up"
+      ? "border-[rgba(200,74,49,0.2)] bg-[rgba(200,74,49,0.1)] text-[#c84a31]"
+      : tone === "down"
+        ? "border-[rgba(18,97,196,0.2)] bg-[rgba(18,97,196,0.1)] text-[#4e8cff]"
+        : "border-[rgba(132,142,156,0.24)] bg-[rgba(132,142,156,0.08)] text-[#d1d4dc]";
 
   return (
-    <div className="flex items-center gap-[10px] rounded-[4px] border border-[rgba(200,74,49,0.2)] bg-[rgba(200,74,49,0.1)] px-[11px] py-px">
-      <span className="text-[#c84a31]">
+    <div className={`flex items-center gap-[10px] rounded-[4px] border px-[11px] py-px ${classes}`}>
+      <span>
         <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 16 16">
-          <path d="M3.5 11.25L6.25 8.5L8 10.25L12.5 5.75" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.2" />
+          {tone === "down" ? (
+            <path d="M3.5 5.75L6.25 8.5L8 6.75L12.5 11.25" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.2" />
+          ) : (
+            <path d="M3.5 11.25L6.25 8.5L8 10.25L12.5 5.75" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.2" />
+          )}
         </svg>
       </span>
       <div className="py-1.5">
-        <p className="text-[12px] font-semibold leading-4 text-[#c84a31]">{text.regimeTitle}</p>
-        <p className="text-[10px] leading-[15px] text-[#848e9c]">{text.regimeDescription}</p>
+        <p className="text-[12px] font-semibold leading-4">{title}</p>
+        <p className="text-[10px] leading-[15px] text-[#848e9c]">{description}</p>
       </div>
     </div>
   );
@@ -1496,7 +1934,13 @@ function AdvancedChart({
   );
 }
 
-function HeatmapSection({ locale }: { locale: MarketLocale }) {
+function HeatmapSection({
+  locale,
+  tiles,
+}: {
+  locale: MarketLocale;
+  tiles: HeatTileData[];
+}) {
   const text = COPY[locale];
 
   return (
@@ -1505,7 +1949,7 @@ function HeatmapSection({ locale }: { locale: MarketLocale }) {
       <p className="mt-1 text-[10px] leading-[15px] text-[#848e9c]">{text.heatmapDescription}</p>
 
       <div className="mt-4 grid grid-cols-2 gap-[2px] md:grid-cols-6 md:grid-rows-2">
-        {MARKET_HEATMAP_DATA.map((tile) => {
+        {tiles.map((tile) => {
           const tone = toneClasses(tile.tone);
 
           return (
@@ -1558,27 +2002,27 @@ function StockCardContent({
         </span>
       </div>
 
-      <div className="mt-2.5">
+        <div className="mt-2.5">
         <div className="flex items-center justify-between text-[10px] leading-[15px] text-[#848e9c]">
           <span>{text.distribution}</span>
           <span>
-            {stock.participants} {text.participantsSuffix}
+            {text.trustLabel} {stock.trust}
           </span>
         </div>
         <div className="mt-1.5 flex h-1 overflow-hidden rounded-[6px] bg-[rgba(43,47,54,0.3)]">
-          <div className="bg-[#c84a31]" style={{ width: `${stock.up}%` }} />
-          <div className="bg-[#848e9c]" style={{ width: `${stock.flat}%` }} />
-          <div className="bg-[#1261c4]" style={{ width: `${stock.down}%` }} />
+          <div className="bg-[#c84a31]" style={{ width: `${stock.attention}%` }} />
+          <div className="bg-[#16a34a]" style={{ width: `${stock.execution}%` }} />
+          <div className="bg-[#1261c4]" style={{ width: `${stock.health}%` }} />
         </div>
         <div className="mt-1.5 flex items-center justify-between text-[9px] font-medium leading-[13.5px]">
           <span className="text-[#c84a31]">
-            {stock.up}% {text.rise}
+            {stock.attention}% {text.attentionLabel}
           </span>
-          <span className="text-[#848e9c]">
-            {stock.flat}% {text.flat}
+          <span className="text-[#16a34a]">
+            {stock.execution}% {text.executionLabel}
           </span>
           <span className="text-[#1261c4]">
-            {stock.down}% {text.fall}
+            {stock.health}% {text.healthLabel}
           </span>
         </div>
       </div>
@@ -1626,29 +2070,141 @@ function SectionHeader({
   );
 }
 
+function MethodologyNotice({ locale }: { locale: MarketLocale }) {
+  const text = COPY[locale];
+  const items = [
+    text.methodologyBullet1,
+    text.methodologyBullet2,
+    text.methodologyBullet3,
+    text.methodologyBullet4,
+    text.methodologyBullet5,
+  ];
+
+  return (
+    <MarketPanel className="p-4">
+      <h2 className="text-[16px] font-semibold leading-6 text-[#d1d4dc]">{text.methodologyTitle}</h2>
+      <p className="mt-2 text-[12px] leading-6 text-[#9aa4b2]">{text.methodologyBody}</p>
+      <ul className="mt-4 space-y-2">
+        {items.map((item) => (
+          <li key={item} className="flex items-start gap-2 text-[12px] leading-6 text-[#d1d4dc]">
+            <span className="mt-[9px] h-1.5 w-1.5 rounded-full bg-[#3366ff]" />
+            <span>{item}</span>
+          </li>
+        ))}
+      </ul>
+    </MarketPanel>
+  );
+}
+
 export function FigmaMarketPage() {
   const locale = (useLocale() === "ko" ? "ko" : "en") as MarketLocale;
   const text = COPY[locale];
+  const [quotes, setQuotes] = useState<TradingQuoteApi[]>([]);
+  const [globalEntries, setGlobalEntries] = useState<LeaderboardEntryApi[]>([]);
+  const [cncfEntries, setCncfEntries] = useState<LeaderboardEntryApi[]>([]);
+  const [season, setSeason] = useState<SeasonApi | null>(null);
+  const [categories, setCategories] = useState<CategoryApi[]>([]);
+  const [marketLoading, setMarketLoading] = useState(true);
+  const [marketError, setMarketError] = useState<string | null>(null);
   const [activeIndexKey, setActiveIndexKey] = useState<string>("oss");
-  const activeIndex =
-    MARKET_INDEX_DATA.find((card) => card.key === activeIndexKey) ??
-    MARKET_INDEX_DATA[0] ??
-    INDEX_CARDS[0];
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadMarketData() {
+      setMarketLoading(true);
+      setMarketError(null);
+
+      try {
+        const [quoteRows, globalLeaderboard, cncfLeaderboard, currentSeason, categoryRows] = await Promise.all([
+          api.trading.quotes(12),
+          api.leaderboards.global({ page_size: "8" }),
+          api.leaderboards.cncf({ page_size: "8" }),
+          api.seasons.current(),
+          api.categories.list(),
+        ]);
+
+        if (cancelled) {
+          return;
+        }
+
+        setQuotes(Array.isArray(quoteRows) ? (quoteRows as TradingQuoteApi[]) : []);
+        setGlobalEntries(Array.isArray(globalLeaderboard?.entries) ? (globalLeaderboard.entries as LeaderboardEntryApi[]) : []);
+        setCncfEntries(Array.isArray(cncfLeaderboard?.entries) ? (cncfLeaderboard.entries as LeaderboardEntryApi[]) : []);
+        setSeason((currentSeason as SeasonApi) ?? null);
+        setCategories(Array.isArray(categoryRows) ? (categoryRows as CategoryApi[]) : []);
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        setMarketError(error instanceof Error ? error.message : "시장 데이터를 불러오지 못했습니다.");
+      } finally {
+        if (!cancelled) {
+          setMarketLoading(false);
+        }
+      }
+    }
+
+    void loadMarketData();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const summaryCards = useMemo(
+    () => buildSummaryCardsFromApi({ locale, season, quotes, categories }),
+    [locale, season, quotes, categories],
+  );
+  const indexCards = useMemo(
+    () => buildIndexCardsFromApi({ locale, quotes, globalEntries, cncfEntries, categories }),
+    [locale, quotes, globalEntries, cncfEntries, categories],
+  );
+  const heatmapTiles = useMemo(() => buildHeatmapFromApi(quotes), [quotes]);
+  const stockCards = useMemo(
+    () => buildStockCardsFromApi({ locale, quotes, entries: globalEntries }),
+    [locale, quotes, globalEntries],
+  );
+  const averageChangeRate = useMemo(
+    () => (quotes.length > 0 ? average(quotes.map((quote) => quote.change_rate)) : 0),
+    [quotes],
+  );
+
+  useEffect(() => {
+    if (indexCards.length === 0) {
+      return;
+    }
+    if (!indexCards.some((card) => card.key === activeIndexKey)) {
+      setActiveIndexKey(indexCards[0]?.key ?? "oss");
+    }
+  }, [activeIndexKey, indexCards]);
+
+  const activeIndex = indexCards.find((card) => card.key === activeIndexKey) ?? indexCards[0] ?? INDEX_CARDS[0];
 
   return (
     <div className="space-y-5 font-figma-body">
       <section className="relative left-1/2 -mt-5 w-screen -translate-x-1/2 border-b border-[#2b2f36] bg-[rgba(30,32,38,0.3)]">
-        <div className="mx-auto flex w-full max-w-[1232px] flex-col gap-4 px-4 py-5 sm:px-6 xl:px-0">
+        <div className="mx-auto flex w-full max-w-[1680px] flex-col gap-4 px-4 py-5 sm:px-6 2xl:px-8">
           <div>
             <h1 className="text-[24px] font-bold leading-8 text-[#d1d4dc]">{text.pageTitle}</h1>
             <p className="mt-1 text-[12px] leading-4 text-[#848e9c]">{text.pageDescription}</p>
           </div>
 
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            {SUMMARY_CARDS.map((card) => (
+            {summaryCards.map((card) => (
               <SummaryCard key={card.key} card={card} locale={locale} />
             ))}
           </div>
+
+          {marketLoading ? (
+            <p className="text-[11px] leading-4 text-[#848e9c]">{text.loading}</p>
+          ) : null}
+
+          {marketError ? (
+            <div className="rounded-[4px] border border-[rgba(200,74,49,0.24)] bg-[rgba(200,74,49,0.08)] px-3 py-2 text-[11px] leading-4 text-[#f1b6aa]">
+              {text.errorPrefix} {marketError}
+            </div>
+          ) : null}
         </div>
       </section>
 
@@ -1663,7 +2219,7 @@ export function FigmaMarketPage() {
         </MarketPanel>
 
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-          {MARKET_INDEX_DATA.map((card) => (
+          {indexCards.map((card) => (
             <IndexCard
               key={card.key}
               active={card.key === activeIndex.key}
@@ -1675,8 +2231,9 @@ export function FigmaMarketPage() {
         </div>
       </section>
 
-      <RegimeBar locale={locale} />
-      <HeatmapSection locale={locale} />
+      <RegimeBar averageChangeRate={averageChangeRate} locale={locale} />
+      <MethodologyNotice locale={locale} />
+      <HeatmapSection locale={locale} tiles={heatmapTiles} />
 
       <MarketPanel className="p-4">
         <SectionHeader
@@ -1701,7 +2258,7 @@ export function FigmaMarketPage() {
         />
 
         <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          {MARKET_STOCK_DATA.map((stock) => (
+          {stockCards.map((stock) => (
             <StockCard key={stock.key} locale={locale} stock={stock} />
           ))}
         </div>

@@ -1,9 +1,10 @@
 """초기 시드 데이터 — 카테고리 + 대표 프로젝트 + 시즌 + 뱃지"""
 
 import asyncio
+import math
 from datetime import datetime, date, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.core.database import async_session_factory, engine, Base
 from app.models.category import Category
@@ -34,6 +35,101 @@ CATEGORIES = [
     ("ai-ml", "AI/ML", "AI/ML", 16),
     ("dev-tools", "개발 도구", "Developer Tools", 17),
 ]
+
+HISTORY_DAYS = 30
+
+TREND_PROFILES = {
+    "kubernetes": {"trend": 0.55, "volatility": 0.45, "response_hours": 26.0},
+    "prometheus": {"trend": 0.82, "volatility": 0.38, "response_hours": 22.0},
+    "envoy": {"trend": 0.18, "volatility": 0.52, "response_hours": 30.0},
+    "argo-cd": {"trend": 0.96, "volatility": 0.42, "response_hours": 18.0},
+    "cilium": {"trend": -0.28, "volatility": 0.58, "response_hours": 40.0},
+    "istio": {"trend": -0.62, "volatility": 0.50, "response_hours": 54.0},
+    "grafana": {"trend": 0.44, "volatility": 0.36, "response_hours": 20.0},
+    "terraform": {"trend": 0.12, "volatility": 0.41, "response_hours": 36.0},
+    "docker": {"trend": -0.08, "volatility": 0.44, "response_hours": 42.0},
+    "etcd": {"trend": -0.36, "volatility": 0.40, "response_hours": 46.0},
+}
+
+
+def _clamp(value: float, minimum: float, maximum: float) -> float:
+    return max(minimum, min(maximum, value))
+
+
+def _oscillation(seed: int, day_index: int, speed: float, scale: float) -> float:
+    return math.sin((day_index + 1 + seed) * speed) * scale
+
+
+def _build_metric(project_id: int, project_seed: dict, day: date, day_index: int) -> ProjectMetricDaily:
+    profile = TREND_PROFILES[project_seed["slug"]]
+    trend = profile["trend"]
+    volatility = profile["volatility"]
+    response_hours = profile["response_hours"]
+    seed = sum(ord(char) for char in project_seed["slug"]) % 17
+    progress = day_index / max(HISTORY_DAYS - 1, 1)
+    momentum = trend * ((progress - 0.5) * 2.1) + _oscillation(seed, day_index, 0.72, volatility * 0.55)
+    daily_star_velocity = max(1, int(project_seed["stars"] * (0.00018 + max(trend, -0.2) * 0.00008)))
+    stars_total = max(
+        100,
+        project_seed["stars"] - (HISTORY_DAYS - 1 - day_index) * daily_star_velocity,
+    )
+    forks_total = max(
+        10,
+        project_seed["forks"] - (HISTORY_DAYS - 1 - day_index) * max(1, int(daily_star_velocity * 0.28)),
+    )
+    watchers_total = max(
+        5,
+        project_seed["watchers"] - (HISTORY_DAYS - 1 - day_index) * max(1, int(daily_star_velocity * 0.05)),
+    )
+
+    stars_delta_1d = max(2, int(project_seed["stars"] * (0.00009 + 0.0001 * (momentum + 1.1))))
+    stars_delta_7d = max(stars_delta_1d * 6, int(project_seed["stars"] * (0.0012 + 0.001 * (momentum + 1.0))))
+    stars_delta_30d = max(stars_delta_7d * 3, int(project_seed["stars"] * (0.004 + 0.003 * (momentum + 1.0))))
+
+    commits_30d = max(12, int(project_seed["commits_30d"] * (1 + momentum * 0.26)))
+    prs_merged_30d = max(8, int(project_seed["prs_merged_30d"] * (1 + momentum * 0.24)))
+    issues_closed_30d = max(6, int(project_seed["issues_closed_30d"] * (1 + momentum * 0.22)))
+    contributors_30d = max(5, int(project_seed["contributors_30d"] * (1 + momentum * 0.20)))
+    releases_90d = max(1, int(round(project_seed["releases_90d"] * (1 + trend * 0.15 + progress * 0.08))))
+
+    issue_close_ratio = _clamp(0.66 + trend * 0.09 + _oscillation(seed, day_index, 0.35, 0.05), 0.4, 0.95)
+    pr_merge_ratio = _clamp(0.74 + trend * 0.07 + _oscillation(seed, day_index, 0.41, 0.04), 0.45, 0.96)
+    maintainer_response = _clamp(response_hours - trend * 10 + _oscillation(seed, day_index, 0.22, 8.0), 8.0, 96.0)
+    stale_issue_ratio = _clamp(0.18 - trend * 0.05 + abs(_oscillation(seed, day_index, 0.33, 0.035)), 0.03, 0.42)
+    velocity_percentile = _clamp(54 + trend * 26 + _oscillation(seed, day_index, 0.52, 10.0), 20.0, 98.0)
+    security_score = _clamp(72 + trend * 8 + _oscillation(seed, day_index, 0.27, 4.0), 55.0, 96.0)
+    dependency_risk = _clamp(29 - trend * 6 + abs(_oscillation(seed, day_index, 0.31, 6.0)), 8.0, 48.0)
+
+    return ProjectMetricDaily(
+        project_id=project_id,
+        metric_date=day,
+        source_type="github",
+        stars_total=stars_total,
+        stars_delta_1d=stars_delta_1d,
+        stars_delta_7d=stars_delta_7d,
+        stars_delta_30d=stars_delta_30d,
+        forks_total=forks_total,
+        watchers_total=watchers_total,
+        commits_1d=max(1, commits_30d // 18),
+        commits_7d=max(5, commits_30d // 4),
+        commits_30d=commits_30d,
+        prs_opened_30d=max(prs_merged_30d + 4, int(prs_merged_30d * 1.18)),
+        prs_merged_30d=prs_merged_30d,
+        issues_opened_30d=max(issues_closed_30d + 3, int(issues_closed_30d * 1.12)),
+        issues_closed_30d=issues_closed_30d,
+        contributors_30d=contributors_30d,
+        contributors_90d=max(contributors_30d + 8, int(contributors_30d * 1.45)),
+        release_count_90d=releases_90d,
+        issue_close_ratio=issue_close_ratio,
+        pr_merge_ratio=pr_merge_ratio,
+        maintainer_response_hours_p50=maintainer_response,
+        stale_issue_ratio=stale_issue_ratio,
+        velocity_percentile=velocity_percentile,
+        security_score_raw=security_score,
+        dependency_risk_score_raw=dependency_risk,
+        last_commit_at=datetime.combine(day, datetime.min.time()) + timedelta(hours=10),
+        last_release_at=datetime.combine(day, datetime.min.time()) - timedelta(days=max(1, 10 - int(trend * 4))),
+    )
 
 SEED_PROJECTS = [
     {
@@ -208,8 +304,8 @@ async def seed():
 
         # 프로젝트
         existing_projects = (await session.execute(select(Project))).scalars().all()
+        today = date.today()
         if not existing_projects:
-            today = date.today()
             for p in SEED_PROJECTS:
                 project = Project(
                     slug=p["slug"],
@@ -235,59 +331,87 @@ async def seed():
                     is_primary=True,
                 ))
 
-                metric = ProjectMetricDaily(
-                    project_id=project.id,
-                    metric_date=today,
-                    source_type="github",
-                    stars_total=p["stars"],
-                    stars_delta_7d=int(p["stars"] * 0.002),
-                    stars_delta_30d=int(p["stars"] * 0.008),
-                    forks_total=p["forks"],
-                    watchers_total=p["watchers"],
-                    commits_30d=p["commits_30d"],
-                    prs_merged_30d=p["prs_merged_30d"],
-                    issues_closed_30d=p["issues_closed_30d"],
-                    contributors_30d=p["contributors_30d"],
-                    release_count_90d=p["releases_90d"],
-                    issue_close_ratio=0.72,
-                    pr_merge_ratio=0.81,
-                    maintainer_response_hours_p50=48.0,
-                    stale_issue_ratio=0.15,
-                    security_score_raw=75.0,
-                    dependency_risk_score_raw=25.0,
-                    last_commit_at=datetime.utcnow(),
-                    last_release_at=datetime.utcnow(),
-                )
-                session.add(metric)
-
-                from app.scoring.engine import score_project
-                score_result = score_project(metric)
-                score = ProjectScoreDaily(
-                    project_id=project.id,
-                    score_date=today,
-                    attention_score=score_result.attention,
-                    execution_score=score_result.execution,
-                    health_score=score_result.health,
-                    trust_score=score_result.trust,
-                    total_score=score_result.total,
-                    scoring_version="v1.0",
-                )
-                session.add(score)
-
         await session.commit()
+        projects = (await session.execute(select(Project))).scalars().all()
+        project_map = {project.slug: project for project in projects}
+        project_by_id = {project.id: project for project in projects}
 
-        # 랭킹 부여
-        scores = (
-            await session.execute(
-                select(ProjectScoreDaily)
-                .where(ProjectScoreDaily.score_date == date.today())
-                .order_by(ProjectScoreDaily.total_score.desc())
-            )
-        ).scalars().all()
+        metric_rows = (await session.execute(select(ProjectMetricDaily.id))).scalars().all()
+        score_rows = (await session.execute(select(ProjectScoreDaily.id))).scalars().all()
+        desired_rows = len(SEED_PROJECTS) * HISTORY_DAYS
+        if len(metric_rows) != desired_rows or len(score_rows) != desired_rows:
+            await session.execute(delete(ProjectScoreDaily))
+            await session.execute(delete(ProjectMetricDaily))
+            await session.flush()
 
-        for rank, s in enumerate(scores, 1):
-            s.rank_global = rank
-        await session.commit()
+            from app.scoring.engine import score_project
+
+            scores_by_day: dict[date, list[ProjectScoreDaily]] = {}
+            for day_index, day in enumerate(
+                [today - timedelta(days=offset) for offset in range(HISTORY_DAYS - 1, -1, -1)]
+            ):
+                day_metrics: list[ProjectMetricDaily] = []
+                for project_seed in SEED_PROJECTS:
+                    project = project_map[project_seed["slug"]]
+                    metric = _build_metric(project.id, project_seed, day, day_index)
+                    day_metrics.append(metric)
+                    session.add(metric)
+
+                day_scores: list[ProjectScoreDaily] = []
+                for metric in day_metrics:
+                    peers = [peer for peer in day_metrics if peer.project_id != metric.project_id]
+                    score_result = score_project(metric, peers)
+                    score = ProjectScoreDaily(
+                        project_id=metric.project_id,
+                        score_date=day,
+                        attention_score=score_result.attention,
+                        execution_score=score_result.execution,
+                        health_score=score_result.health,
+                        trust_score=score_result.trust,
+                        total_score=score_result.total,
+                        scoring_version="v1.0",
+                    )
+                    day_scores.append(score)
+                    session.add(score)
+                scores_by_day[day] = day_scores
+
+            ordered_days = sorted(scores_by_day.keys())
+            previous_by_project: dict[int, ProjectScoreDaily] = {}
+            for day in ordered_days:
+                day_scores = scores_by_day[day]
+                day_scores.sort(key=lambda item: item.total_score, reverse=True)
+                for rank, score in enumerate(day_scores, 1):
+                    score.rank_global = rank
+
+                cncf_scores = [
+                    score for score in day_scores
+                    if project_by_id[score.project_id].foundation_type == FoundationType.CNCF
+                ]
+                for rank, score in enumerate(cncf_scores, 1):
+                    score.rank_cncf = rank
+
+                category_groups: dict[int | None, list[ProjectScoreDaily]] = {}
+                for score in day_scores:
+                    project = project_by_id[score.project_id]
+                    category_groups.setdefault(project.category_id, []).append(score)
+                for category_scores in category_groups.values():
+                    for rank, score in enumerate(category_scores, 1):
+                        score.rank_category = rank
+
+                rising_candidates: list[tuple[float, ProjectScoreDaily]] = []
+                for score in day_scores:
+                    previous = previous_by_project.get(score.project_id)
+                    if previous:
+                        rising_candidates.append((score.total_score - previous.total_score, score))
+                    previous_by_project[score.project_id] = score
+
+                for rank, (_, score) in enumerate(
+                    sorted(rising_candidates, key=lambda item: item[0], reverse=True),
+                    1,
+                ):
+                    score.rising_rank = rank
+
+            await session.commit()
 
         # 시즌 생성 (§20.3)
         existing_seasons = (await session.execute(select(Season))).scalars().all()

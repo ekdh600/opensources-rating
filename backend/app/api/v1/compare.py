@@ -32,6 +32,7 @@ async def compare_projects(
     metric_repo = MetricRepository(db)
 
     items = []
+    snapshot_date: date | None = None
     for slug in slugs:
         project = await proj_repo.get_by_slug(slug)
         if not project:
@@ -43,6 +44,11 @@ async def compare_projects(
 
         score = await score_repo.get_latest_score(project.id)
         metric = await metric_repo.get_latest_metric(project.id)
+        if snapshot_date is None:
+            if score and score.score_date:
+                snapshot_date = score.score_date
+            elif metric and metric.metric_date:
+                snapshot_date = metric.metric_date
 
         items.append(
             ComparisonItem(
@@ -59,6 +65,6 @@ async def compare_projects(
         )
 
     return ComparisonResponse(
-        date=date.today(),
+        date=snapshot_date or date.today(),
         items=items,
     )

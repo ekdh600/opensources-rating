@@ -12,6 +12,14 @@ from app.schemas.leaderboard import LeaderboardResponse, LeaderboardEntry, Risin
 router = APIRouter(prefix="/leaderboards", tags=["리더보드"])
 
 
+def _resolve_snapshot_date(scores, fallback: date | None = None) -> date:
+    if scores:
+        first = scores[0]
+        if getattr(first, "score_date", None):
+            return first.score_date
+    return fallback or date.today()
+
+
 async def _build_entries(
     scores, db: AsyncSession
 ) -> list[LeaderboardEntry]:
@@ -50,7 +58,7 @@ async def global_leaderboard(
     )
     entries = await _build_entries(scores, db)
     return LeaderboardResponse(
-        date=score_date or date.today(),
+        date=_resolve_snapshot_date(scores, score_date),
         total_count=total,
         page=page,
         page_size=page_size,
@@ -74,7 +82,7 @@ async def cncf_leaderboard(
     for entry in entries:
         entry.rank = scores[entries.index(entry)].rank_cncf or 0
     return LeaderboardResponse(
-        date=score_date or date.today(),
+        date=_resolve_snapshot_date(scores, score_date),
         total_count=total,
         page=page,
         page_size=page_size,
@@ -109,7 +117,7 @@ async def rising_leaderboard(
             )
         )
     return {
-        "date": score_date or date.today(),
+        "date": _resolve_snapshot_date(scores, score_date),
         "total_count": total,
         "page": page,
         "page_size": page_size,

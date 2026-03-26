@@ -5,7 +5,7 @@ import { Link } from "@/i18n/routing";
 import { MarketLoginRequired } from "@/components/market/MarketLoginRequired";
 import { MarketPageIntro, MarketPanel } from "@/components/market/MarketUi";
 import { api } from "@/lib/api";
-import { useTradingSessionState } from "@/lib/trading-session";
+import { resolveTradingAuthError, useTradingSessionState } from "@/lib/trading-session";
 import { cn } from "@/lib/utils";
 
 type PortfolioPosition = {
@@ -47,6 +47,10 @@ export function FigmaMarketPortfolioPage() {
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const profitableCount = useMemo(
+    () => (portfolio?.positions ?? []).filter((position) => position.unrealized_pnl_points >= 0).length,
+    [portfolio],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -64,7 +68,7 @@ export function FigmaMarketPortfolioPage() {
         if (!cancelled) setPortfolio(data);
       } catch (loadError) {
         if (!cancelled) {
-          setError(loadError instanceof Error ? loadError.message : "포트폴리오를 불러오지 못했습니다.");
+          setError(resolveTradingAuthError(loadError, "포트폴리오를 불러오지 못했습니다."));
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -93,11 +97,6 @@ export function FigmaMarketPortfolioPage() {
       />
     );
   }
-
-  const profitableCount = useMemo(
-    () => (portfolio?.positions ?? []).filter((position) => position.unrealized_pnl_points >= 0).length,
-    [portfolio],
-  );
 
   return (
     <div className="space-y-6">

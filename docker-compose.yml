@@ -1,4 +1,29 @@
-version: "3.9"
+x-backend-common: &backend-common
+  image: opensources-rating-backend:latest
+  build:
+    context: ./backend
+    dockerfile: Dockerfile
+  environment:
+    DATABASE_URL: postgresql+asyncpg://oss_rating:${POSTGRES_PASSWORD:-oss_rating_dev}@db:5432/oss_rating
+    REDIS_URL: redis://redis:6379/0
+    GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+    FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:-http://localhost:3000}
+    EMAIL_DELIVERY_MODE: ${EMAIL_DELIVERY_MODE:-log}
+    EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-OSS Market}
+    EMAIL_FROM_ADDRESS: ${EMAIL_FROM_ADDRESS:-no-reply@example.com}
+    SMTP_HOST: ${SMTP_HOST:-}
+    SMTP_PORT: ${SMTP_PORT:-587}
+    SMTP_USERNAME: ${SMTP_USERNAME:-}
+    SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+    SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
+    SMTP_USE_SSL: ${SMTP_USE_SSL:-false}
+  depends_on:
+    db:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  volumes:
+    - ./backend:/app
 
 services:
   db:
@@ -28,55 +53,31 @@ services:
       retries: 5
 
   backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    <<: *backend-common
     ports:
       - "8000:8000"
-    environment:
-      DATABASE_URL: postgresql+asyncpg://oss_rating:${POSTGRES_PASSWORD:-oss_rating_dev}@db:5432/oss_rating
-      REDIS_URL: redis://redis:6379/0
-      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    volumes:
-      - ./backend:/app
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    command:
+      - sh
+      - -c
+      - python scripts/bootstrap_db.py && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   celery-worker:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    environment:
-      DATABASE_URL: postgresql+asyncpg://oss_rating:${POSTGRES_PASSWORD:-oss_rating_dev}@db:5432/oss_rating
-      REDIS_URL: redis://redis:6379/0
-      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+    <<: *backend-common
     depends_on:
-      db:
+      backend:
         condition: service_healthy
-      redis:
-        condition: service_healthy
-    volumes:
-      - ./backend:/app
     command: celery -A app.jobs.celery_app worker --loglevel=info
 
   celery-beat:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    environment:
-      DATABASE_URL: postgresql+asyncpg://oss_rating:${POSTGRES_PASSWORD:-oss_rating_dev}@db:5432/oss_rating
-      REDIS_URL: redis://redis:6379/0
+    <<: *backend-common
     depends_on:
-      db:
+      backend:
         condition: service_healthy
-      redis:
-        condition: service_healthy
-    volumes:
-      - ./backend:/app
     command: celery -A app.jobs.celery_app beat --loglevel=info
 
   frontend:
@@ -89,11 +90,12 @@ services:
       # 브라우저는 http://localhost:3000/api/... 로 호출 → Next 리라이트로 backend 컨테이너로 전달
       BACKEND_INTERNAL_URL: http://backend:8000
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     volumes:
       - ./frontend:/app
       - /app/node_modules
-      - /app/.next
+      - /app/.next-dev
 
 volumes:
   pgdata:

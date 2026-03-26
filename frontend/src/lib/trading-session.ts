@@ -63,6 +63,21 @@ export function clearTradingSession() {
   window.dispatchEvent(new Event("oss-market-session-change"));
 }
 
+export function isInvalidTradingTokenError(error: unknown) {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return error.message.includes("401 Unauthorized") || error.message.includes("유효하지 않은 토큰");
+}
+
+export function resolveTradingAuthError(error: unknown, fallbackMessage: string) {
+  if (isInvalidTradingTokenError(error)) {
+    clearTradingSession();
+    return "로그인이 만료되었습니다. 다시 로그인해 주세요.";
+  }
+  return error instanceof Error ? error.message : fallbackMessage;
+}
+
 export async function loginTradingSession(body: {
   username: string;
   password: string;
