@@ -5,7 +5,7 @@ import { Link, useRouter } from "@/i18n/routing";
 import { MarketLoginRequired } from "@/components/market/MarketLoginRequired";
 import { MarketPageIntro, MarketPanel } from "@/components/market/MarketUi";
 import { api } from "@/lib/api";
-import { clearTradingSession, useTradingSessionState } from "@/lib/trading-session";
+import { clearTradingSession, resolveTradingAuthError, useTradingSessionState } from "@/lib/trading-session";
 
 type Me = {
   id: number;
@@ -62,7 +62,7 @@ export function FigmaMarketAccountPage() {
         }
       } catch (loadError) {
         if (!cancelled) {
-          setError(loadError instanceof Error ? loadError.message : "계정 정보를 불러오지 못했습니다.");
+          setError(resolveTradingAuthError(loadError, "계정 정보를 불러오지 못했습니다."));
         }
       } finally {
         if (!cancelled) setLoading(false);

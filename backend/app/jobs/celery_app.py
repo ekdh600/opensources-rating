@@ -9,6 +9,7 @@ celery_app = Celery(
     "oss_rating",
     broker=settings.redis_url,
     backend=settings.redis_url,
+    include=["app.jobs.tasks"],
 )
 
 celery_app.conf.update(

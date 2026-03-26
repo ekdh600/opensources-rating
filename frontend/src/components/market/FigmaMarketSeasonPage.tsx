@@ -78,7 +78,7 @@ export function FigmaMarketSeasonPage() {
   return (
     <div className="space-y-5 font-figma-body text-[#d1d4dc]">
       <section className="relative left-1/2 -mt-5 w-screen -translate-x-1/2 border-b border-[#2b2f36] bg-[rgba(30,32,38,0.3)]">
-        <div className="mx-auto max-w-[1232px] px-4 py-5 sm:px-6 xl:px-0">
+        <div className="mx-auto max-w-[1680px] px-4 py-5 sm:px-6 2xl:px-8">
           <div className="space-y-4 px-6">
             <div>
               <h1 className="text-[24px] font-bold leading-8">시즌 랭킹</h1>

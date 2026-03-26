@@ -21,13 +21,83 @@ function getApiBaseUrl(): string {
 }
 
 /** JSON detail 없으면 일부 텍스트/HTML 포함 */
+function translateValidationDetail(detail: Record<string, unknown>): string | null {
+  const type = typeof detail.type === "string" ? detail.type : "";
+  const loc = Array.isArray(detail.loc) ? detail.loc.map(String) : [];
+  const field = loc[loc.length - 1] ?? "";
+  const ctx = detail.ctx && typeof detail.ctx === "object" ? (detail.ctx as Record<string, unknown>) : {};
+
+  const fieldLabel =
+    field === "password" || field === "new_password"
+      ? "비밀번호"
+      : field === "username"
+        ? "아이디"
+        : field === "email"
+          ? "이메일"
+          : field === "display_name"
+            ? "이름"
+            : field === "token"
+              ? "토큰"
+              : field === "content"
+                ? "내용"
+                : null;
+
+  if (type === "string_too_short" && fieldLabel) {
+    const minLength = typeof ctx.min_length === "number" ? ctx.min_length : null;
+    if (minLength != null) {
+      return `${fieldLabel}는 최소 ${minLength}자 이상이어야 합니다.`;
+    }
+  }
+
+  if (type === "string_too_long" && fieldLabel) {
+    const maxLength = typeof ctx.max_length === "number" ? ctx.max_length : null;
+    if (maxLength != null) {
+      return `${fieldLabel}는 최대 ${maxLength}자까지 입력할 수 있습니다.`;
+    }
+  }
+
+  if (type === "missing" && fieldLabel) {
+    return `${fieldLabel}를 입력해 주세요.`;
+  }
+
+  if (type === "greater_than" && fieldLabel) {
+    const gt = typeof ctx.gt === "number" ? ctx.gt : null;
+    if (gt != null) {
+      return `${fieldLabel}는 ${gt}보다 커야 합니다.`;
+    }
+  }
+
+  if (type === "less_than_equal" && fieldLabel) {
+    const le = typeof ctx.le === "number" ? ctx.le : null;
+    if (le != null) {
+      return `${fieldLabel}는 ${le} 이하여야 합니다.`;
+    }
+  }
+
+  if (type === "string_pattern_mismatch" && fieldLabel) {
+    return `${fieldLabel} 형식이 올바르지 않습니다.`;
+  }
+
+  return null;
+}
+
 function readErrorMessage(text: string): string {
   const slice = text.slice(0, 500);
   try {
     const body = JSON.parse(text) as { detail?: unknown };
     const d = body?.detail;
     if (typeof d === "string") return d;
-    if (Array.isArray(d)) return JSON.stringify(d);
+    if (Array.isArray(d)) {
+      const translated = d
+        .map((item) =>
+          item && typeof item === "object" ? translateValidationDetail(item as Record<string, unknown>) : null,
+        )
+        .filter((item): item is string => Boolean(item));
+      if (translated.length > 0) {
+        return translated.join(" ");
+      }
+      return JSON.stringify(d);
+    }
     if (d != null) return JSON.stringify(d);
   } catch {
     /* HTML/빈 응답 등 */
@@ -146,6 +216,11 @@ export const api = {
         method: "POST",
         body: JSON.stringify(body),
       }),
+    validatePasswordReset: (body: { token: string }) =>
+      fetchAPI<{ message: string }>(`/api/v1/auth/password-reset/validate`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
     confirmPasswordReset: (body: { token: string; new_password: string }) =>
       fetchAPI<{ message: string }>(`/api/v1/auth/password-reset/confirm`, {
         method: "POST",
@@ -178,6 +253,10 @@ export const api = {
       const qs = params ? "?" + new URLSearchParams(params).toString() : "";
       return fetchAPI<any>(`/api/v1/leaderboards/rising${qs}`);
     },
+  },
+  seasons: {
+    list: () => fetchAPI<any[]>(`/api/v1/seasons`),
+    current: () => fetchAPI<any>(`/api/v1/seasons/current`),
   },
   categories: {
     list: () => fetchAPI<any[]>(`/api/v1/categories`),

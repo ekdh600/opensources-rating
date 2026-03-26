@@ -5,7 +5,7 @@ import { Link } from "@/i18n/routing";
 import { MarketLoginRequired } from "@/components/market/MarketLoginRequired";
 import { MarketPageIntro, MarketPanel } from "@/components/market/MarketUi";
 import { api } from "@/lib/api";
-import { useTradingSessionState } from "@/lib/trading-session";
+import { resolveTradingAuthError, useTradingSessionState } from "@/lib/trading-session";
 import { cn } from "@/lib/utils";
 
 type Quote = {
@@ -41,6 +41,24 @@ const FILTERS = [
   { key: "Security", label: "보안" },
   { key: "Database", label: "데이터" },
 ];
+
+const FILTER_CATEGORY_MATCHERS: Record<string, string[]> = {
+  Infrastructure: [
+    "쿠버네티스",
+    "컨테이너 런타임",
+    "서비스 메시",
+    "네트워킹/CNI",
+    "인그레스/API 게이트웨이",
+    "스토리지",
+    "CI/CD",
+    "GitOps",
+    "IaC",
+    "클라우드 플랫폼",
+  ],
+  Observability: ["관측성/모니터링", "로깅"],
+  Security: ["보안"],
+  Database: ["데이터베이스", "메시징/스트리밍"],
+};
 
 function formatNumber(value: number, digits = 2) {
   return value.toLocaleString("ko-KR", {
@@ -93,7 +111,7 @@ export function FigmaMarketTradingPage() {
         setPortfolio(portfolioData);
       } catch (loadError) {
         if (cancelled) return;
-        setError(loadError instanceof Error ? loadError.message : "트레이딩 데이터를 불러오지 못했습니다.");
+        setError(resolveTradingAuthError(loadError, "트레이딩 데이터를 불러오지 못했습니다."));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -115,15 +133,19 @@ export function FigmaMarketTradingPage() {
 
   const filteredQuotes = useMemo(() => {
     return quotes.filter((quote) => {
+      const category = quote.category ?? "";
+      const filterCategories = FILTER_CATEGORY_MATCHERS[selectedFilter];
       const matchesFilter =
         selectedFilter === "all" ||
-        (quote.category ?? "").toLowerCase().includes(selectedFilter.toLowerCase());
+        (filterCategories
+          ? filterCategories.some((item) => category.includes(item))
+          : category.toLowerCase().includes(selectedFilter.toLowerCase()));
       const term = search.trim().toLowerCase();
       const matchesSearch =
         term.length === 0 ||
         quote.name.toLowerCase().includes(term) ||
         quote.slug.toLowerCase().includes(term) ||
-        (quote.category ?? "").toLowerCase().includes(term);
+        category.toLowerCase().includes(term);
       return matchesFilter && matchesSearch;
     });
   }, [quotes, search, selectedFilter]);
@@ -156,8 +178,8 @@ export function FigmaMarketTradingPage() {
         stats={[
           {
             label: "접속 계정",
-            value: session?.username ?? "게스트 준비 중",
-            note: "브라우저마다 개별 게스트 세션이 생성됩니다.",
+            value: session.username,
+            note: "이메일 인증을 마친 로그인 계정만 트레이딩을 이용할 수 있습니다.",
           },
           {
             label: "보유 포인트",

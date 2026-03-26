@@ -16,11 +16,12 @@ import { Link } from "@/i18n/routing";
 import { MarketLoginRequired } from "@/components/market/MarketLoginRequired";
 import { MarketPanel } from "@/components/market/MarketUi";
 import { api } from "@/lib/api";
-import { useTradingSessionState } from "@/lib/trading-session";
+import { resolveTradingAuthError, useTradingSessionState } from "@/lib/trading-session";
 import { cn } from "@/lib/utils";
 
 type TimeframeKey = "1D" | "1W" | "1M";
 type TradeSide = "buy" | "sell";
+type CommentSortKey = "popular" | "latest";
 
 type Quote = {
   project_id: number;
@@ -99,6 +100,13 @@ const TIMEFRAMES: { key: TimeframeKey; label: string; points: number }[] = [
   { key: "1D", label: "1일", points: 16 },
   { key: "1W", label: "1주", points: 20 },
   { key: "1M", label: "1개월", points: 24 },
+];
+
+const COMMENT_PROMPTS = [
+  "장기 성장 관점에서 보면",
+  "단기 조정 신호로 보이는 이유는",
+  "기술 우위라고 보는 근거는",
+  "리스크 요인을 먼저 보면",
 ];
 
 function formatPrice(value: number) {
@@ -191,6 +199,8 @@ export function FigmaMarketTradingDetailPage({ slug }: { slug: string }) {
   const [comments, setComments] = useState<ProjectComment[]>([]);
   const [commentDraft, setCommentDraft] = useState("");
   const [commentLoading, setCommentLoading] = useState(false);
+  const [commentSort, setCommentSort] = useState<CommentSortKey>("popular");
+  const [replyTargetId, setReplyTargetId] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -219,7 +229,7 @@ export function FigmaMarketTradingDetailPage({ slug }: { slug: string }) {
         setComments(commentData);
       } catch (loadError) {
         if (cancelled) return;
-        setError(loadError instanceof Error ? loadError.message : "트레이딩 데이터를 불러오지 못했습니다.");
+        setError(resolveTradingAuthError(loadError, "트레이딩 데이터를 불러오지 못했습니다."));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -245,6 +255,69 @@ export function FigmaMarketTradingDetailPage({ slug }: { slug: string }) {
     if (!quote) return [];
     return orders.filter((order) => order.project_id === quote.project_id).slice(0, 8);
   }, [orders, quote]);
+  const topLevelComments = useMemo(
+    () => comments.filter((comment) => comment.parent_id === null),
+    [comments],
+  );
+  const repliesByParent = useMemo(() => {
+    const map = new Map<number, ProjectComment[]>();
+    comments
+      .filter((comment) => comment.parent_id !== null)
+      .forEach((comment) => {
+        const parentId = comment.parent_id as number;
+        map.set(parentId, [...(map.get(parentId) ?? []), comment]);
+      });
+
+    for (const [parentId, items] of map.entries()) {
+      map.set(
+        parentId,
+        [...items].sort(
+          (left, right) => new Date(left.created_at).getTime() - new Date(right.created_at).getTime(),
+        ),
+      );
+    }
+    return map;
+  }, [comments]);
+  const sortedTopLevelComments = useMemo(() => {
+    const items = [...topLevelComments];
+    if (commentSort === "latest") {
+      return items.sort(
+        (left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime(),
+      );
+    }
+    return items.sort((left, right) => {
+      if (right.recommendation_count !== left.recommendation_count) {
+        return right.recommendation_count - left.recommendation_count;
+      }
+      return new Date(right.created_at).getTime() - new Date(left.created_at).getTime();
+    });
+  }, [commentSort, topLevelComments]);
+  const totalRecommendations = useMemo(
+    () => comments.reduce((sum, comment) => sum + comment.recommendation_count, 0),
+    [comments],
+  );
+  const replyCount = useMemo(
+    () => comments.filter((comment) => comment.parent_id !== null).length,
+    [comments],
+  );
+  const participantCount = useMemo(
+    () => new Set(comments.map((comment) => comment.user_id)).size,
+    [comments],
+  );
+  const hotComment = useMemo(
+    () =>
+      [...comments].sort((left, right) => {
+        if (right.recommendation_count !== left.recommendation_count) {
+          return right.recommendation_count - left.recommendation_count;
+        }
+        return new Date(right.created_at).getTime() - new Date(left.created_at).getTime();
+      })[0],
+    [comments],
+  );
+  const replyTarget = useMemo(
+    () => (replyTargetId ? comments.find((comment) => comment.id === replyTargetId) ?? null : null),
+    [comments, replyTargetId],
+  );
 
   async function refreshTradingState() {
     if (!session?.accessToken) return;
@@ -267,11 +340,13 @@ export function FigmaMarketTradingDetailPage({ slug }: { slug: string }) {
       setCommentLoading(true);
       const created = await api.trading.createComment(session.accessToken, quote.slug, {
         content: commentDraft.trim(),
+        parent_id: replyTargetId,
       });
       setComments((current) => [created, ...current]);
       setCommentDraft("");
+      setReplyTargetId(null);
     } catch (commentError) {
-      setError(commentError instanceof Error ? commentError.message : "댓글을 저장하지 못했습니다.");
+      setError(resolveTradingAuthError(commentError, "댓글을 저장하지 못했습니다."));
     } finally {
       setCommentLoading(false);
     }
@@ -294,7 +369,7 @@ export function FigmaMarketTradingDetailPage({ slug }: { slug: string }) {
         ),
       );
     } catch (commentError) {
-      setError(commentError instanceof Error ? commentError.message : "추천 처리에 실패했습니다.");
+      setError(resolveTradingAuthError(commentError, "추천 처리에 실패했습니다."));
     }
   }
 
@@ -321,7 +396,7 @@ export function FigmaMarketTradingDetailPage({ slug }: { slug: string }) {
         `${quote.name} ${quantity}주 ${side === "buy" ? "매수" : "매도"}가 체결되었습니다. 잔고 ${formatInteger(result.cash_points)}p`,
       );
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "주문 처리 중 오류가 발생했습니다.");
+      setError(resolveTradingAuthError(submitError, "주문 처리 중 오류가 발생했습니다."));
     } finally {
       setSubmitting(false);
     }
@@ -416,7 +491,203 @@ export function FigmaMarketTradingDetailPage({ slug }: { slug: string }) {
         </div>
       </MarketPanel>
 
-      <section className="grid gap-6 xl:grid-cols-[1.5fr_0.95fr]">
+      <section className="grid gap-6 xl:grid-cols-[0.95fr_1.35fr_0.9fr]">
+        <div className="space-y-6">
+          <div className="xl:sticky xl:top-6 xl:max-h-[calc(100vh-40px)] xl:overflow-y-auto xl:pr-1">
+            <MarketPanel className="px-5 py-5">
+              <div className="flex items-center justify-between border-b border-[#2b2f36] pb-4">
+                <div>
+                  <h2 className="text-[18px] font-semibold text-[#d1d4dc]">커뮤니티</h2>
+                  <p className="mt-1 text-[12px] text-[#848e9c]">이 종목을 보는 사람들의 근거와 반론이 먼저 보이는 구역입니다.</p>
+                </div>
+                <span className="text-[11px] text-[#848e9c]">{comments.length} comments</span>
+              </div>
+
+              <div className="mt-4 rounded-[6px] border border-[#2b2f36] bg-[#161b24] p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-[12px] font-medium text-[#d1d4dc]">댓글</p>
+                  <span className="text-[11px] text-[#848e9c]">근거 중심 토론</span>
+                </div>
+                {replyTarget ? (
+                  <div className="mt-3 flex items-center justify-between gap-3 rounded-[4px] border border-[rgba(51,102,255,0.18)] bg-[rgba(51,102,255,0.08)] px-3 py-2">
+                    <p className="text-[12px] text-[#d1d4dc]">
+                      <span className="font-medium">{replyTarget.display_name}</span> 님의 댓글에 답글 작성 중
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setReplyTargetId(null)}
+                      className="text-[11px] text-[#8fb3ff] transition hover:text-[#d1d4dc]"
+                    >
+                      답글 취소
+                    </button>
+                  </div>
+                ) : null}
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {COMMENT_PROMPTS.map((prompt) => (
+                    <button
+                      key={prompt}
+                      type="button"
+                      onClick={() => setCommentDraft((current) => (current.includes(prompt) ? current : `${current ? `${current}\n` : ""}${prompt} `))}
+                      className="rounded-[999px] border border-[#2b2f36] bg-[#11161f] px-3 py-1.5 text-[11px] text-[#8fb3ff] transition hover:border-[rgba(51,102,255,0.22)] hover:text-[#d1d4dc]"
+                    >
+                      {prompt}
+                    </button>
+                  ))}
+                </div>
+                <textarea
+                  value={commentDraft}
+                  onChange={(event) => setCommentDraft(event.target.value)}
+                  placeholder={replyTarget ? "해당 의견에 대한 답글을 남겨보세요." : "이 종목에 대한 의견, 근거, 시장 관점을 남겨보세요."}
+                  className="mt-3 min-h-[120px] w-full rounded-[4px] border border-[#2b2f36] bg-[#1c212c] px-3 py-3 text-[13px] text-[#d1d4dc] outline-none placeholder:text-[#697586]"
+                />
+                <div className="mt-3 flex items-center justify-between gap-3">
+                  <span className="text-[11px] text-[#848e9c]">매매 신호보다 근거와 토론 품질이 더 중요한 커뮤니티입니다.</span>
+                  <button
+                    type="button"
+                    onClick={() => void submitComment()}
+                    disabled={commentLoading || !commentDraft.trim()}
+                    className={cn(
+                      "inline-flex h-9 items-center rounded-[4px] bg-[#3366ff] px-4 text-[12px] font-medium text-white transition hover:bg-[#4b7cff]",
+                      (commentLoading || !commentDraft.trim()) && "cursor-not-allowed opacity-60",
+                    )}
+                  >
+                    {commentLoading ? "등록 중..." : replyTarget ? "답글 등록" : "댓글 등록"}
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-4 grid grid-cols-2 gap-2 xl:grid-cols-4">
+                {[
+                  { label: "대화 수", value: formatInteger(topLevelComments.length) },
+                  { label: "답글 수", value: formatInteger(replyCount) },
+                  { label: "참여 인원", value: formatInteger(participantCount) },
+                  { label: "추천 합계", value: formatInteger(totalRecommendations) },
+                ].map((item) => (
+                  <article key={item.label} className="rounded-[6px] border border-[#2b2f36] bg-[#121720] px-3 py-3">
+                    <p className="text-[10px] text-[#848e9c]">{item.label}</p>
+                    <p className="mt-1 text-[16px] font-semibold text-[#d1d4dc]">{item.value}</p>
+                  </article>
+                ))}
+              </div>
+
+              {hotComment ? (
+                <div className="mt-4 rounded-[6px] border border-[rgba(51,102,255,0.22)] bg-[rgba(51,102,255,0.08)] px-4 py-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[10px] uppercase tracking-[0.8px] text-[#8fb3ff]">HOT TAKE</p>
+                      <p className="mt-2 text-[13px] font-semibold text-[#d1d4dc]">{hotComment.display_name}</p>
+                    </div>
+                    <span className="text-[12px] text-[#8fb3ff]">추천 {hotComment.recommendation_count}</span>
+                  </div>
+                  <p className="mt-3 line-clamp-4 whitespace-pre-wrap text-[13px] leading-6 text-[#d9e4ff]">
+                    {hotComment.content}
+                  </p>
+                </div>
+              ) : null}
+
+              <div className="mt-4 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-[12px] text-[#848e9c]">추천이 많은 의견과 최신 대화를 기준으로 정렬할 수 있습니다.</p>
+                  <div className="flex gap-2">
+                    {[
+                      { key: "popular" as const, label: "인기순" },
+                      { key: "latest" as const, label: "최신순" },
+                    ].map((item) => (
+                      <button
+                        key={item.key}
+                        type="button"
+                        onClick={() => setCommentSort(item.key)}
+                        className={cn(
+                          "h-8 rounded-[4px] border px-3 text-[12px] font-medium transition",
+                          commentSort === item.key
+                            ? "border-[#3366ff] bg-[rgba(51,102,255,0.12)] text-[#d1d4dc]"
+                            : "border-[#2b2f36] bg-[#161b24] text-[#848e9c] hover:text-[#d1d4dc]",
+                        )}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {comments.length === 0 ? (
+                  <div className="rounded-[4px] bg-[#161b24] px-4 py-4 text-[12px] text-[#848e9c]">
+                    아직 작성된 커뮤니티 댓글이 없습니다. 첫 의견을 남겨보세요.
+                  </div>
+                ) : (
+                  sortedTopLevelComments.map((comment) => (
+                    <article key={comment.id} className="rounded-[6px] border border-[#2b2f36] bg-[#161b24] px-4 py-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-[13px] font-semibold text-[#d1d4dc]">{comment.display_name}</p>
+                          <p className="mt-1 text-[11px] text-[#848e9c]">
+                            @{comment.username} · {new Date(comment.created_at).toLocaleString("ko-KR")}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void toggleRecommendation(comment.id)}
+                          className={cn(
+                            "inline-flex h-8 items-center rounded-[4px] border px-3 text-[12px] font-medium transition",
+                            comment.recommended_by_me
+                              ? "border-[rgba(51,102,255,0.22)] bg-[rgba(51,102,255,0.1)] text-[#d1d4dc]"
+                              : "border-[#2b2f36] bg-[#1c212c] text-[#848e9c] hover:text-[#d1d4dc]",
+                          )}
+                        >
+                          추천 {comment.recommendation_count}
+                        </button>
+                      </div>
+                      <p className="mt-3 whitespace-pre-wrap text-[13px] leading-6 text-[#c7d0da]">{comment.content}</p>
+                      <div className="mt-3 flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setReplyTargetId(comment.id)}
+                          className="text-[12px] text-[#8fb3ff] transition hover:text-[#d1d4dc]"
+                        >
+                          답글 달기
+                        </button>
+                        <span className="text-[11px] text-[#848e9c]">
+                          답글 {formatInteger(repliesByParent.get(comment.id)?.length ?? 0)}
+                        </span>
+                      </div>
+
+                      {(repliesByParent.get(comment.id) ?? []).length > 0 ? (
+                        <div className="mt-4 space-y-3 border-t border-[#2b2f36] pt-4">
+                          {(repliesByParent.get(comment.id) ?? []).map((reply) => (
+                            <div key={reply.id} className="rounded-[6px] border border-[#2b2f36] bg-[#11161f] px-4 py-4">
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <p className="text-[13px] font-semibold text-[#d1d4dc]">{reply.display_name}</p>
+                                  <p className="mt-1 text-[11px] text-[#848e9c]">
+                                    @{reply.username} · {new Date(reply.created_at).toLocaleString("ko-KR")}
+                                  </p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => void toggleRecommendation(reply.id)}
+                                  className={cn(
+                                    "inline-flex h-8 items-center rounded-[4px] border px-3 text-[12px] font-medium transition",
+                                    reply.recommended_by_me
+                                      ? "border-[rgba(51,102,255,0.22)] bg-[rgba(51,102,255,0.1)] text-[#d1d4dc]"
+                                      : "border-[#2b2f36] bg-[#1c212c] text-[#848e9c] hover:text-[#d1d4dc]",
+                                  )}
+                                >
+                                  추천 {reply.recommendation_count}
+                                </button>
+                              </div>
+                              <p className="mt-3 whitespace-pre-wrap text-[13px] leading-6 text-[#c7d0da]">{reply.content}</p>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </article>
+                  ))
+                )}
+              </div>
+            </MarketPanel>
+          </div>
+        </div>
+
         <div className="space-y-6">
           <MarketPanel className="px-5 py-5">
             <div className="flex flex-col gap-3 border-b border-[#2b2f36] pb-4 sm:flex-row sm:items-end sm:justify-between">
@@ -515,71 +786,6 @@ export function FigmaMarketTradingDetailPage({ slug }: { slug: string }) {
                       <span>수수료 {formatInteger(order.fee_points)}p</span>
                       <span>상태 {order.status}</span>
                     </div>
-                  </article>
-                ))
-              )}
-            </div>
-          </MarketPanel>
-
-          <MarketPanel className="px-5 py-5">
-            <div className="flex items-center justify-between border-b border-[#2b2f36] pb-4">
-              <h2 className="text-[18px] font-semibold text-[#d1d4dc]">커뮤니티</h2>
-              <span className="text-[11px] text-[#848e9c]">{comments.length} comments</span>
-            </div>
-
-            <div className="mt-4 rounded-[6px] border border-[#2b2f36] bg-[#161b24] p-4">
-              <p className="text-[12px] font-medium text-[#d1d4dc]">의견 남기기</p>
-              <textarea
-                value={commentDraft}
-                onChange={(event) => setCommentDraft(event.target.value)}
-                placeholder="이 종목에 대한 의견, 근거, 시장 관점을 남겨보세요."
-                className="mt-3 min-h-[104px] w-full rounded-[4px] border border-[#2b2f36] bg-[#1c212c] px-3 py-3 text-[13px] text-[#d1d4dc] outline-none placeholder:text-[#697586]"
-              />
-              <div className="mt-3 flex items-center justify-between gap-3">
-                <span className="text-[11px] text-[#848e9c]">욕설·광고·도배 댓글은 운영 정책에 따라 숨김 처리됩니다.</span>
-                <button
-                  type="button"
-                  onClick={() => void submitComment()}
-                  disabled={commentLoading || !commentDraft.trim()}
-                  className={cn(
-                    "inline-flex h-9 items-center rounded-[4px] bg-[#3366ff] px-4 text-[12px] font-medium text-white transition hover:bg-[#4b7cff]",
-                    (commentLoading || !commentDraft.trim()) && "cursor-not-allowed opacity-60",
-                  )}
-                >
-                  {commentLoading ? "등록 중..." : "댓글 등록"}
-                </button>
-              </div>
-            </div>
-
-            <div className="mt-4 space-y-3">
-              {comments.length === 0 ? (
-                <div className="rounded-[4px] bg-[#161b24] px-4 py-4 text-[12px] text-[#848e9c]">
-                  아직 작성된 커뮤니티 댓글이 없습니다. 첫 의견을 남겨보세요.
-                </div>
-              ) : (
-                comments.map((comment) => (
-                  <article key={comment.id} className="rounded-[6px] border border-[#2b2f36] bg-[#161b24] px-4 py-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-[13px] font-semibold text-[#d1d4dc]">{comment.display_name}</p>
-                        <p className="mt-1 text-[11px] text-[#848e9c]">
-                          @{comment.username} · {new Date(comment.created_at).toLocaleString("ko-KR")}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => void toggleRecommendation(comment.id)}
-                        className={cn(
-                          "inline-flex h-8 items-center rounded-[4px] border px-3 text-[12px] font-medium transition",
-                          comment.recommended_by_me
-                            ? "border-[rgba(51,102,255,0.22)] bg-[rgba(51,102,255,0.1)] text-[#d1d4dc]"
-                            : "border-[#2b2f36] bg-[#1c212c] text-[#848e9c] hover:text-[#d1d4dc]",
-                        )}
-                      >
-                        추천 {comment.recommendation_count}
-                      </button>
-                    </div>
-                    <p className="mt-3 whitespace-pre-wrap text-[13px] leading-6 text-[#c7d0da]">{comment.content}</p>
                   </article>
                 ))
               )}
@@ -685,7 +891,7 @@ export function FigmaMarketTradingDetailPage({ slug }: { slug: string }) {
               <span className="text-[11px] text-[#848e9c]">{quote.name}</span>
             </div>
             {position ? (
-              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
                 {[
                   { label: "보유 수량", value: `${formatInteger(position.quantity)}주`, accent: "text-[#d1d4dc]" },
                   { label: "평균 단가", value: formatPrice(position.average_price), accent: "text-[#d1d4dc]" },

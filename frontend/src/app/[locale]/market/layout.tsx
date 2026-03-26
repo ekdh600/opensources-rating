@@ -9,7 +9,7 @@ export default function MarketLayout({
   return (
     <div className="market-shell relative left-1/2 min-h-screen w-screen -translate-x-1/2">
       <MarketHeader />
-      <main className="mx-auto w-full max-w-[1232px] px-4 py-5 sm:px-6 xl:px-0">{children}</main>
+      <main className="mx-auto w-full max-w-[1680px] px-4 py-5 sm:px-6 2xl:px-8">{children}</main>
       <MarketMethodologyNotice />
       <MarketFooter />
     </div>

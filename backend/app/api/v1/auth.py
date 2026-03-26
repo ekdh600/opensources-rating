@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import or_, select
@@ -12,6 +13,7 @@ from app.core.auth import (
     hash_token,
     verify_password,
 )
+from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.notifications import send_auth_email
 from app.models.user import AuthToken, PasswordHistory, User
@@ -22,6 +24,7 @@ from app.schemas.auth import (
     ForgotIdRequest,
     PasswordResetConfirm,
     PasswordResetRequest,
+    TokenOnlyRequest,
     TokenResponse,
     UserLogin,
     UserProfile,
@@ -37,6 +40,13 @@ RESET_PASSWORD_PURPOSE = "reset_password"
 
 def _normalize_email(email: str) -> str:
     return email.strip().lower()
+
+
+def _build_market_auth_link(*, action: str, token: str, email: str) -> str:
+    settings = get_settings()
+    base_url = settings.frontend_base_url.rstrip("/")
+    params = urlencode({"action": action, "token": token, "email": email})
+    return f"{base_url}/ko/market/auth?{params}"
 
 
 async def _create_auth_token(
@@ -65,6 +75,15 @@ async def _find_active_token(db: AsyncSession, *, purpose: str, token: str) -> A
         AuthToken.token_hash == hash_token(token),
         AuthToken.consumed_at.is_(None),
         AuthToken.expires_at > datetime.utcnow(),
+    )
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def _find_token(db: AsyncSession, *, purpose: str, token: str) -> AuthToken | None:
+    stmt = select(AuthToken).where(
+        AuthToken.purpose == purpose,
+        AuthToken.token_hash == hash_token(token),
     )
     result = await db.execute(stmt)
     return result.scalar_one_or_none()
@@ -113,12 +132,17 @@ async def register(body: UserRegister, db: AsyncSession = Depends(get_db)):
         purpose=VERIFY_EMAIL_PURPOSE,
         expires_in_hours=24,
     )
+    verification_link = _build_market_auth_link(
+        action="verify-email",
+        token=raw_token,
+        email=normalized_email,
+    )
     send_auth_email(
         normalized_email,
         "OSS Market 이메일 인증",
-        f"안녕하세요 {body.display_name}님,\n\n아래 인증 토큰을 입력해 이메일 인증을 완료해 주세요.\n\n인증 토큰: {raw_token}\n\n토큰은 24시간 동안 유효합니다.",
+        f"안녕하세요 {body.display_name}님,\n\n아래 링크를 눌러 이메일 인증을 완료해 주세요.\n\n인증 링크: {verification_link}\n\n토큰은 발급 후 24시간 동안 유효하며 1회만 사용할 수 있습니다.",
     )
-    return AuthActionResponse(message="회원가입이 완료되었습니다. 이메일 인증 토큰을 확인해 주세요.")
+    return AuthActionResponse(message="회원가입이 완료되었습니다. 이메일로 보낸 인증 링크를 확인해 주세요.")
 
 
 @router.post("/verify-email/request", response_model=AuthActionResponse)
@@ -134,20 +158,30 @@ async def request_email_verification(body: EmailOnlyRequest, db: AsyncSession = 
             purpose=VERIFY_EMAIL_PURPOSE,
             expires_in_hours=24,
         )
+        verification_link = _build_market_auth_link(
+            action="verify-email",
+            token=raw_token,
+            email=normalized_email,
+        )
         send_auth_email(
             normalized_email,
             "OSS Market 이메일 인증 재요청",
-            f"안녕하세요 {user.display_name}님,\n\n아래 인증 토큰을 입력해 이메일 인증을 완료해 주세요.\n\n인증 토큰: {raw_token}\n\n토큰은 24시간 동안 유효합니다.",
+            f"안녕하세요 {user.display_name}님,\n\n아래 링크를 눌러 이메일 인증을 완료해 주세요.\n\n인증 링크: {verification_link}\n\n토큰은 발급 후 24시간 동안 유효하며 1회만 사용할 수 있습니다.",
         )
 
-    return AuthActionResponse(message="이메일이 존재하면 인증 토큰을 발송했습니다.")
+    return AuthActionResponse(message="이메일이 존재하면 인증 링크를 발송했습니다.")
 
 
 @router.post("/verify-email/confirm", response_model=AuthActionResponse)
 async def confirm_email_verification(body: VerifyEmailConfirm, db: AsyncSession = Depends(get_db)):
     token_row = await _find_active_token(db, purpose=VERIFY_EMAIL_PURPOSE, token=body.token)
     if not token_row:
-        raise HTTPException(status_code=400, detail="유효하지 않거나 만료된 인증 토큰입니다.")
+        any_token = await _find_token(db, purpose=VERIFY_EMAIL_PURPOSE, token=body.token)
+        if any_token:
+            user = await db.get(User, any_token.user_id)
+            if user and user.email_verified:
+                return AuthActionResponse(message="이미 이메일 인증이 완료된 계정입니다. 바로 로그인할 수 있습니다.")
+        raise HTTPException(status_code=400, detail="유효하지 않거나 만료된 인증 링크입니다.")
 
     result = await db.execute(select(User).where(User.id == token_row.user_id))
     user = result.scalar_one_or_none()
@@ -208,13 +242,26 @@ async def request_password_reset(body: PasswordResetRequest, db: AsyncSession = 
             purpose=RESET_PASSWORD_PURPOSE,
             expires_in_hours=1,
         )
+        reset_link = _build_market_auth_link(
+            action="password-reset",
+            token=raw_token,
+            email=normalized_email,
+        )
         send_auth_email(
             normalized_email,
             "OSS Market 비밀번호 재설정",
-            f"안녕하세요 {user.display_name}님,\n\n아래 재설정 토큰을 입력하고 새 비밀번호를 설정해 주세요.\n\n재설정 토큰: {raw_token}\n\n토큰은 1시간 동안 유효합니다.",
+            f"안녕하세요 {user.display_name}님,\n\n아래 링크를 눌러 새 비밀번호를 설정해 주세요.\n\n재설정 링크: {reset_link}\n\n링크는 발급 후 1시간 동안 유효하며 1회만 사용할 수 있습니다.",
         )
 
-    return AuthActionResponse(message="계정이 존재하면 비밀번호 재설정 메일을 발송했습니다.")
+    return AuthActionResponse(message="계정이 존재하면 비밀번호 재설정 링크를 발송했습니다.")
+
+
+@router.post("/password-reset/validate", response_model=AuthActionResponse)
+async def validate_password_reset_token(body: TokenOnlyRequest, db: AsyncSession = Depends(get_db)):
+    token_row = await _find_active_token(db, purpose=RESET_PASSWORD_PURPOSE, token=body.token)
+    if not token_row:
+        raise HTTPException(status_code=400, detail="유효하지 않거나 만료된 비밀번호 재설정 링크입니다.")
+    return AuthActionResponse(message="이메일 인증이 확인되었습니다. 새 비밀번호를 등록해 주세요.")
 
 
 @router.post("/password-reset/confirm", response_model=AuthActionResponse)

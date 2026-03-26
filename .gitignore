@@ -8,6 +8,7 @@ env/
 venv/
 node_modules/
 .next/
+.next-dev/
 dist/
 build/
 *.egg-info/
@@ -26,3 +27,5 @@ htmlcov/
 .pytest_cache/
 .codex_figma*
 .mypy_cache/
+*.tsbuildinfo
+backend/celerybeat-schedule

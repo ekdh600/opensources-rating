@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { useLocale } from "next-intl";
 import { Link, usePathname } from "@/i18n/routing";
-import { clearTradingSession, getTradingSession, type TradingSession } from "@/lib/trading-session";
+import { clearTradingSession, useTradingSessionState } from "@/lib/trading-session";
 
 type MarketLocale = "ko" | "en";
 
@@ -11,6 +10,7 @@ const NAV_ITEMS = [
   { key: "market", href: "/market", label: { ko: "시장", en: "Market" } },
   { key: "trading", href: "/market/trading", label: { ko: "트레이딩", en: "Trading" } },
   { key: "analysis", href: "/market/analysis", label: { ko: "분석", en: "Analysis" } },
+  { key: "methodology", href: "/market/methodology", label: { ko: "계산 방식", en: "Methodology" } },
   { key: "screener", href: "/market/screener", label: { ko: "스크리너", en: "Screener" } },
   { key: "portfolio", href: "/market/my-positions", label: { ko: "포트폴리오", en: "Portfolio" } },
   { key: "ranking", href: "/market/season", label: { ko: "랭킹", en: "Ranking" } },
@@ -20,23 +20,6 @@ const NAV_ITEMS = [
 
 function isActive(pathname: string, href: string) {
   return href === "/market" ? pathname === href : pathname.startsWith(href);
-}
-
-function useMarketSession() {
-  const [session, setSession] = useState<TradingSession | null>(null);
-
-  useEffect(() => {
-    const sync = () => setSession(getTradingSession());
-    sync();
-    window.addEventListener("storage", sync);
-    window.addEventListener("oss-market-session-change", sync);
-    return () => {
-      window.removeEventListener("storage", sync);
-      window.removeEventListener("oss-market-session-change", sync);
-    };
-  }, []);
-
-  return session;
 }
 
 function BrandIcon() {
@@ -78,6 +61,15 @@ function NavIcon({ kind }: { kind: string }) {
       </svg>
     );
   }
+  if (kind === "methodology") {
+    return (
+      <svg aria-hidden="true" className="h-[14px] w-[14px]" fill="none" viewBox="0 0 14 14">
+        <circle cx="7" cy="7" r="4.8" stroke="currentColor" strokeWidth="1.2" />
+        <path d="M7 5.15V7.25" stroke="currentColor" strokeLinecap="round" strokeWidth="1.2" />
+        <circle cx="7" cy="9.55" fill="currentColor" r="0.7" />
+      </svg>
+    );
+  }
   if (kind === "badges") {
     return (
       <svg aria-hidden="true" className="h-[14px] w-[14px]" fill="none" viewBox="0 0 14 14">
@@ -106,13 +98,13 @@ function NavIcon({ kind }: { kind: string }) {
 export function MarketHeader() {
   const locale = (useLocale() === "ko" ? "ko" : "en") as MarketLocale;
   const pathname = usePathname();
-  const session = useMarketSession();
+  const { session, hydrated } = useTradingSessionState();
   const actionLabel = session ? (locale === "ko" ? "마이페이지" : "My Page") : (locale === "ko" ? "로그인" : "Login");
   const actionHref = session ? "/market/account" : "/market/auth";
 
   return (
     <header className="border-b border-[#2b2f36] bg-[#1e2026]">
-      <div className="mx-auto flex h-14 w-full max-w-[1232px] items-center justify-between gap-4 px-4 sm:px-6 xl:px-0">
+      <div className="mx-auto flex h-14 w-full max-w-[1680px] items-center justify-between gap-4 px-4 sm:px-6 2xl:px-8">
         <div className="flex min-w-0 items-center gap-6">
           <Link href="/market" className="flex items-center gap-2">
             <div className="flex h-7 w-7 items-center justify-center rounded-[4px] bg-[rgba(51,102,255,0.1)]">
@@ -141,12 +133,12 @@ export function MarketHeader() {
         <div className="hidden items-center gap-3 md:flex">
           <span className="text-[10px] leading-[15px] text-[#848e9c]">Season 2026-Q1</span>
           <Link
-            href={actionHref}
+            href={hydrated ? actionHref : "/market/auth"}
             className="inline-flex h-8 items-center rounded-[4px] border border-[rgba(51,102,255,0.22)] bg-[rgba(51,102,255,0.1)] px-3 text-[12px] font-medium text-[#d1d4dc] transition hover:bg-[rgba(51,102,255,0.16)]"
           >
-            {actionLabel}
+            {hydrated ? actionLabel : locale === "ko" ? "로그인" : "Login"}
           </Link>
-          {session ? (
+          {hydrated && session ? (
             <button
               type="button"
               onClick={() => clearTradingSession()}
@@ -157,7 +149,7 @@ export function MarketHeader() {
           ) : null}
         </div>
       </div>
-      <nav className="mx-auto flex w-full max-w-[1232px] items-center gap-1 overflow-x-auto px-4 pb-3 md:hidden sm:px-6 xl:px-0">
+      <nav className="mx-auto flex w-full max-w-[1680px] items-center gap-1 overflow-x-auto px-4 pb-3 md:hidden sm:px-6 2xl:px-8">
         {NAV_ITEMS.map((item) => {
           const active = isActive(pathname, item.href);
           return (
@@ -174,12 +166,12 @@ export function MarketHeader() {
           );
         })}
         <Link
-          href={actionHref}
+          href={hydrated ? actionHref : "/market/auth"}
           className="inline-flex h-7 shrink-0 items-center rounded-[4px] border border-[rgba(51,102,255,0.22)] bg-[rgba(51,102,255,0.1)] px-3 text-[12px] font-medium leading-4 text-[#d1d4dc]"
         >
-          {actionLabel}
+          {hydrated ? actionLabel : locale === "ko" ? "로그인" : "Login"}
         </Link>
-        {session ? (
+        {hydrated && session ? (
           <button
             type="button"
             onClick={() => clearTradingSession()}
@@ -199,7 +191,7 @@ export function MarketFooter() {
 
   return (
     <footer className="border-t border-[#2b2f36] bg-[#181c21]">
-      <div className="mx-auto flex w-full max-w-[1232px] flex-col gap-3 px-4 py-[21px] text-[10px] leading-[15px] text-[#848e9c] sm:px-6 md:flex-row md:items-end md:justify-between xl:px-0">
+      <div className="mx-auto flex w-full max-w-[1680px] flex-col gap-3 px-4 py-[21px] text-[10px] leading-[15px] text-[#848e9c] sm:px-6 md:flex-row md:items-end md:justify-between 2xl:px-8">
         <div className="space-y-0.5">
           <p>© 2026 OSS Market. 이 서비스는 실제 금융 거래 플랫폼이 아닙니다.</p>
           <p>오픈소스 프로젝트 데이터를 시장 메타포로 해석한 분석 도구입니다.</p>
@@ -212,7 +204,7 @@ export function MarketFooter() {
 
 export function MarketMethodologyNotice() {
   return (
-    <section className="mx-auto mt-6 w-full max-w-[1232px] px-4 sm:px-6 xl:px-0">
+    <section className="mx-auto mt-6 w-full max-w-[1680px] px-4 sm:px-6 2xl:px-8">
       <div className="rounded-[8px] border border-[#2b2f36] bg-[#161b24] px-5 py-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="max-w-[760px]">
@@ -226,10 +218,10 @@ export function MarketMethodologyNotice() {
             </p>
           </div>
           <Link
-            href="/market/design"
+            href="/market/methodology"
             className="inline-flex h-9 items-center rounded-[4px] border border-[rgba(51,102,255,0.22)] bg-[rgba(51,102,255,0.1)] px-3 text-[12px] font-medium text-[#d1d4dc] transition hover:bg-[rgba(51,102,255,0.16)]"
           >
-            설계 페이지 보기
+            계산 방식 보기
           </Link>
         </div>
         <div className="mt-5 grid gap-3 lg:grid-cols-2 2xl:grid-cols-4">

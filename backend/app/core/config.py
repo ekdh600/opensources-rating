@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings
 from functools import lru_cache
+from typing import Literal
 
 
 class Settings(BaseSettings):
@@ -16,6 +17,16 @@ class Settings(BaseSettings):
     github_rate_limit_buffer: int = 100
 
     secret_key: str = "change-me-in-production"
+    frontend_base_url: str = "http://localhost:3000"
+    email_delivery_mode: Literal["log", "smtp"] = "log"
+    email_from_name: str = "OSS Market"
+    email_from_address: str = "no-reply@example.com"
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_use_tls: bool = True
+    smtp_use_ssl: bool = False
 
     api_rate_limit: int = 60
     api_rate_limit_window: int = 60
